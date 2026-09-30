@@ -22,6 +22,14 @@ param(
   [ValidateSet('openai-completions','openai-responses','anthropic-messages')]
   [string]$ApiType  = $(if ($env:OMO_API_TYPE) { $env:OMO_API_TYPE } else { 'openai-completions' }),
   [string]$DefaultModel,
+  [string]$Memory,
+  [string]$OmoJson,
+  [string[]]$Category = @(),
+  [string[]]$Agent = @(),
+  [string[]]$TaskSetting = @(),
+  [string[]]$Team = @(),
+  [string[]]$SetJson = @(),
+  [switch]$NoAgentConfig,
   [switch]$Interactive,
   [switch]$NoDefault,
   [switch]$DryRun,
@@ -129,6 +137,35 @@ function Invoke-Wizard {
   if (-not $NoDefault) { Write-Host "   Default  : $(if ($DefaultModel) { $DefaultModel } else { '(provider/<first model>)' })" }
   Write-Host ''
   if (-not (Ask-Yes '7) Write this config?' 'n')) { Info 'cancelled'; exit 0 }
+
+  Write-Host ''
+  if (Ask-Yes '8) Configure multi-agent features now (categories / agents / task / memory) into ~/.omo/omo.jsonc?' 'n') {
+    Invoke-AgentWizard
+  }
+}
+
+function Invoke-AgentWizard {
+  Write-Host ''
+  Info 'multi-agent setup (blank = keep current / skip)'
+  Write-Host ''
+
+  $v = Ask 'a) Pin a task category as NAME=MODEL[:level] (e.g. quick=glm-5.3-flash)' $null
+  while ($v) { $script:Category += $v; $v = Ask '   another category (blank = done)' $null }
+
+  $v = Ask 'b) Pin an agent as NAME=MODEL[:level] (e.g. explore=deepseek-flash:high)' $null
+  while ($v) { $script:Agent += $v; $v = Ask '   another agent (blank = done)' $null }
+
+  $v = Ask 'c) Task engine setting as KEY=VALUE (e.g. default_concurrency=4)' $null
+  while ($v) { $script:TaskSetting += $v; $v = Ask '   another task key (blank = done)' $null }
+
+  $v = Ask 'd) Memory subsystem: 1) enable  2) disable  (blank = leave unchanged)' $null
+  switch ($v) {
+    '1' { $script:Memory = 'on' }
+    '2' { $script:Memory = 'off' }
+  }
+
+  $v = Ask 'e) Define a team as NAME=JSON (blank = skip)' $null
+  while ($v) { $script:Team += $v; $v = Ask '   another team (blank = done)' $null }
 }
 
 if (-not $SkipInstall) {
@@ -146,14 +183,33 @@ if (-not $SkipInstall) {
   Info 'SkipInstall set, not checking installation'
 }
 
-if ($Interactive -or (-not $BaseUrl) -or (-not $ApiKey) -or (-not $Models)) { Invoke-Wizard }
+$haveAgentFlags = $NoAgentConfig -or $Category.Count -or $Agent.Count -or $TaskSetting.Count -or $Team.Count -or $SetJson.Count -or $Memory -or $OmoJson
+if ($Interactive) { Invoke-Wizard }
+elseif ($BaseUrl -or $ApiKey -or $Models) {
+  if (-not $BaseUrl -or -not $ApiKey -or -not $Models) { Invoke-Wizard }
+}
+elseif (-not $haveAgentFlags) { Invoke-Wizard }
 
-$configArgs = @('--base-url', $BaseUrl, '--api-key', $ApiKey, '--models', $Models)
+$configArgs = @()
+if ($BaseUrl -or $ApiKey -or $Models) {
+  $configArgs += @('--base-url', $BaseUrl, '--api-key', $ApiKey, '--models', $Models)
+}
 if ($Provider)     { $configArgs += @('--provider', $Provider) }
 if ($ApiType)      { $configArgs += @('--api-type', $ApiType) }
 if ($DefaultModel) { $configArgs += @('--default-model', $DefaultModel) }
 if ($NoDefault)    { $configArgs += '--no-default' }
 if ($DryRun)       { $configArgs += '--dry-run' }
+if (-not $NoAgentConfig) {
+  foreach ($c in $Category)    { $configArgs += @('--category', $c) }
+  foreach ($a in $Agent)       { $configArgs += @('--agent', $a) }
+  foreach ($t in $TaskSetting) { $configArgs += @('--task', $t) }
+  foreach ($t in $Team)        { $configArgs += @('--team', $t) }
+  foreach ($j in $SetJson)     { $configArgs += @('--set-json', $j) }
+  if ($Memory)  { $configArgs += @('--memory', $Memory) }
+  if ($OmoJson) { $configArgs += @('--omo-json', $OmoJson) }
+} else {
+  $configArgs += '--no-agent-config'
+}
 
 function Get-ConfigScript {
   if ($ScriptDir) {

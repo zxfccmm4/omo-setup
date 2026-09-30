@@ -20,6 +20,7 @@
 | 特性 | 说明 |
 | --- | --- |
 | 🧭 **交互式** | 直接运行即可，脚本逐步引导你填写 base URL、API key、模型等，无需记命令。 |
+| 🤖 **多智能体** | 可选配置 OmO 的任务分类、子代理、任务引擎、记忆与团队（写入 `~/.omo/omo.jsonc`）。 |
 | 🔍 **智能检测** | 已安装 `omo` 就跳过安装；未安装则询问后自动安装。 |
 | 🖥️ **跨平台** | Linux / macOS 用 `omo-setup.sh`，Windows 用 `omo-setup.ps1`，配置逻辑共用 `omo-config.mjs`。 |
 | 🔒 **安全写入** | 确认后才写盘，自动备份原配置，并与已有 provider **合并**而非覆盖。 |
@@ -29,6 +30,7 @@
 - [快速开始](#-快速开始)
 - [脚本流程](#-脚本流程)
 - [写入的配置文件](#-写入的配置文件)
+- [多智能体配置](#-多智能体配置)
 - [非交互模式（脚本 / CI）](#-非交互模式脚本--ci)
 - [参数](#-参数)
 - [依赖](#-依赖)
@@ -138,6 +140,50 @@ omo config updated.
 
 > 写入前会自动生成时间戳备份，并与已有 provider **合并**而非覆盖。
 
+## 🤖 多智能体配置
+
+除了 provider，脚本还能把 OmO 的多智能体功能写进 `~/.omo/omo.jsonc`（该文件在 OmO 根目录，是 `agent/` 的上一级）。向导第 8 步会询问是否配置，非交互模式则用下面的参数。
+
+只写了多智能体参数、没写 provider 参数时，脚本会跳过 provider 向导，只更新 `omo.jsonc`。
+
+**任务分类（categories）** —— 给某一类任务指定模型与推理档位：
+
+```bash
+./omo-setup.sh --category architect=anthropic/claude-opus-5-5:max \
+               --category quick=glm-5.3-flash
+```
+
+**子代理（agents）** —— 覆盖内置代理（`explore` / `librarian` / `plan-consultant` / `plan-reviewer`）：
+
+```bash
+./omo-setup.sh --agent explore=deepseek-flash:high
+```
+
+**任务引擎（task）** —— 并发数、最大深度、执行模式等：
+
+```bash
+./omo-setup.sh --task default_concurrency=4 --task max_depth=2 \
+               --task 'wait={"default_ms":90000}'
+```
+
+**记忆与团队** —— 开关记忆子系统，或定义团队：
+
+```bash
+./omo-setup.sh --memory on \
+  --team 'reviewers={"leadAgentId":"lead","members":[{"kind":"category","name":"quick","category":"deep-low","prompt":"Review the diff."}]}'
+```
+
+**任意字段** —— 用 `--set-json` 或 `--omo-json <文件>` 深度合并任意合法配置：
+
+```bash
+./omo-setup.sh --set-json '{"git_master":{"commit_footer":true}}'
+./omo-setup.sh --omo-json ./my-omo.jsonc
+```
+
+写入时会读取现有 `omo.jsonc`（支持 `//` 注释与尾逗号）并**深度合并**：同名对象递归合并，数组/标量整体替换；写入前自动备份为 `omo.jsonc.bak.<时间戳>`。若只想配 provider，加 `--no-agent-config` 即可完全不碰 `omo.jsonc`。
+
+生成的配置符合 [OmO 官方 schema](https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/omo.schema.json)，文件顶部会自动补上 `$schema` 以便编辑器提示。
+
 ## 🤖 非交互模式（脚本 / CI）
 
 一次性传入参数或环境变量，脚本会跳过向导：
@@ -181,6 +227,14 @@ OMO_MODELS=gpt-4o \
 | `--dry-run` / `-DryRun` | — | 只打印将要做的改动，不写盘 |
 | `--skip-install` / `-SkipInstall` | — | 只配置，不做安装检测 |
 | `--allow-root` | `OMO_INSTALL_ALLOW_SUDO=1` | 允许以 root 安装 omo（仅 `omo-setup.sh`） |
+| `--category` / `-Category` | — | 固定任务分类，`NAME=MODEL[:LEVEL]`，可重复 |
+| `--agent` / `-Agent` | — | 固定子代理模型，`NAME=MODEL[:LEVEL]`，可重复 |
+| `--task` / `-TaskSetting` | — | 设置任务引擎键值，`KEY=VALUE`，可重复 |
+| `--memory` / `-Memory` | — | 开关记忆子系统，`on` \| `off` |
+| `--team` / `-Team` | — | 定义团队，`NAME=JSON`，可重复 |
+| `--set-json` / `-SetJson` | — | 深度合并任意 JSON 片段，可重复 |
+| `--omo-json` / `-OmoJson` | — | 深度合并一个 JSON/JSONC 文件 |
+| `--no-agent-config` / `-NoAgentConfig` | — | 完全不修改 `omo.jsonc` |
 
 ## 🧩 依赖
 
@@ -237,7 +291,7 @@ node omo-config.mjs --base-url https://api.example.com/v1 --api-key sk-xxx --mod
 <details>
 <summary><b>配置文件在哪？</b></summary>
 
-默认 `~/.omo/agent`；可用环境变量 `OMO_CODING_AGENT_DIR`（旧版：`SENPI_CODING_AGENT_DIR` / `PI_CODING_AGENT_DIR`）覆盖。
+默认 `~/.omo/agent`；可用环境变量 `OMO_CODING_AGENT_DIR`（旧版：`SENPI_CODING_AGENT_DIR` / `PI_CODING_AGENT_DIR`）覆盖。多智能体配置写在 `~/.omo/omo.jsonc`，可用 `OMO_OMO_JSONC` 覆盖路径。
 
 </details>
 

@@ -24,6 +24,16 @@
 #   --dry-run             print planned changes, write nothing
 #   --skip-install        never install, only configure
 #   --allow-root          allow installing omo as root (sets OMO_INSTALL_ALLOW_SUDO=1)
+#
+# Multi-agent flags (write ~/.omo/omo.jsonc; repeatable where noted):
+#   --category NAME=MODEL[:LEVEL]   pin a task category (repeatable)
+#   --agent NAME=MODEL[:LEVEL]      pin an agent, e.g. explore (repeatable)
+#   --task KEY=VALUE                set a task engine key (repeatable)
+#   --memory on|off                 toggle the memory subsystem
+#   --team NAME=JSON                define a team (repeatable)
+#   --set-json JSON                 deep-merge arbitrary JSON into omo.jsonc
+#   --omo-json FILE                 deep-merge a JSON/JSONC file into omo.jsonc
+#   --no-agent-config               never touch omo.jsonc
 #   -h, --help            show this help
 #
 set -euo pipefail
@@ -45,11 +55,21 @@ FORCE_INTERACTIVE=0
 CONFIG_SCRIPT=""
 TMP_CONFIG=""
 
+# Multi-agent config (written to omo.jsonc by omo-config.mjs)
+MEMORY=""
+OMO_JSON=""
+NO_AGENT_CONFIG=0
+CATEGORIES=()
+AGENTS=()
+TASKS=()
+TEAMS=()
+SET_JSONS=()
+
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
-cleanup() { [ -n "$TMP_CONFIG" ] && [ -f "$TMP_CONFIG" ] && rm -f "$TMP_CONFIG"; }
+cleanup() { if [ -n "$TMP_CONFIG" ] && [ -f "$TMP_CONFIG" ]; then rm -f "$TMP_CONFIG"; fi; return 0; }
 trap cleanup EXIT
 
 mask() {
@@ -70,7 +90,7 @@ while [ $# -gt 0 ]; do
     --skip-install) SKIP_INSTALL=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --no-default) NO_DEFAULT=1; shift ;;
-    -h|--help) sed -n '2,28p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,40p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --base-url) BASE_URL="$2"; shift 2 ;;
     --api-key) API_KEY="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
@@ -83,6 +103,21 @@ while [ $# -gt 0 ]; do
     --provider=*) PROVIDER="${1#*=}"; shift ;;
     --api-type=*) API_TYPE="${1#*=}"; shift ;;
     --default-model=*) DEFAULT_MODEL="${1#*=}"; shift ;;
+    --memory) MEMORY="$2"; shift 2 ;;
+    --omo-json) OMO_JSON="$2"; shift 2 ;;
+    --no-agent-config) NO_AGENT_CONFIG=1; shift ;;
+    --category) CATEGORIES+=("$2"); shift 2 ;;
+    --agent) AGENTS+=("$2"); shift 2 ;;
+    --task) TASKS+=("$2"); shift 2 ;;
+    --team) TEAMS+=("$2"); shift 2 ;;
+    --set-json) SET_JSONS+=("$2"); shift 2 ;;
+    --memory=*) MEMORY="${1#*=}"; shift ;;
+    --omo-json=*) OMO_JSON="${1#*=}"; shift ;;
+    --category=*) CATEGORIES+=("${1#*=}"); shift ;;
+    --agent=*) AGENTS+=("${1#*=}"); shift ;;
+    --task=*) TASKS+=("${1#*=}"); shift ;;
+    --team=*) TEAMS+=("${1#*=}"); shift ;;
+    --set-json=*) SET_JSONS+=("${1#*=}"); shift ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -219,6 +254,49 @@ wizard() {
   fi
   printf '\n' >&2
   if ! ask_yes "7) Write this config?" "n"; then info "cancelled"; exit 0; fi
+
+  printf '\n' >&2
+  if ask_yes "8) Configure multi-agent features now (categories / agents / task / memory) into ~/.omo/omo.jsonc?" "n"; then
+    agent_wizard
+  fi
+}
+
+agent_wizard() {
+  local v
+  printf '\n' >&2
+  info "multi-agent setup (blank = keep current / skip)"
+  printf '\n' >&2
+
+  v="$(ask 'a) Pin a task category as NAME=MODEL[:level] (e.g. quick=glm-5.3-flash)' '')"
+  while [ -n "$v" ]; do
+    CATEGORIES+=("$v")
+    v="$(ask '   another category (blank = done)' '')"
+  done
+
+  v="$(ask 'b) Pin an agent as NAME=MODEL[:level] (e.g. explore=deepseek-flash:high)' '')"
+  while [ -n "$v" ]; do
+    AGENTS+=("$v")
+    v="$(ask '   another agent (blank = done)' '')"
+  done
+
+  v="$(ask 'c) Task engine setting as KEY=VALUE (e.g. default_concurrency=4)' '')"
+  while [ -n "$v" ]; do
+    TASKS+=("$v")
+    v="$(ask '   another task key (blank = done)' '')"
+  done
+
+  v="$(ask 'd) Memory subsystem: 1) enable  2) disable  (blank = leave unchanged)' '')"
+  case "$v" in
+    1) MEMORY="on" ;;
+    2) MEMORY="off" ;;
+    *) : ;;
+  esac
+
+  v="$(ask 'e) Define a team as NAME=JSON (blank = skip)' '')"
+  while [ -n "$v" ]; do
+    TEAMS+=("$v")
+    v="$(ask '   another team (blank = done)' '')"
+  done
 }
 
 if [ "$SKIP_INSTALL" -eq 0 ]; then
@@ -241,16 +319,44 @@ else
   info "--skip-install set, not checking installation"
 fi
 
-if [ "$FORCE_INTERACTIVE" -eq 1 ] || [ -z "$BASE_URL" ] || [ -z "$API_KEY" ] || [ -z "$MODELS" ]; then
+HAVE_AGENT_FLAGS=0
+if [ ${#CATEGORIES[@]} -gt 0 ] || [ ${#AGENTS[@]} -gt 0 ] || [ ${#TASKS[@]} -gt 0 ] || \
+   [ ${#TEAMS[@]} -gt 0 ] || [ ${#SET_JSONS[@]} -gt 0 ] || [ -n "$MEMORY" ] || [ -n "$OMO_JSON" ]; then
+  HAVE_AGENT_FLAGS=1
+fi
+
+# Run the provider wizard when forced, when provider flags were given but are
+# incomplete, or when nothing at all was supplied (the interactive default).
+if [ "$FORCE_INTERACTIVE" -eq 1 ]; then
+  wizard
+elif [ -n "$BASE_URL" ] || [ -n "$API_KEY" ] || [ -n "$MODELS" ]; then
+  if [ -z "$BASE_URL" ] || [ -z "$API_KEY" ] || [ -z "$MODELS" ]; then wizard; fi
+elif [ "$HAVE_AGENT_FLAGS" -eq 0 ]; then
   wizard
 fi
 
 CONFIG_ARGS=(--base-url "$BASE_URL" --api-key "$API_KEY" --models "$MODELS")
+# Only pass provider flags when they are present; a multi-agent-only run must
+# not send empty --base-url/--api-key/--models values.
+if [ -z "$BASE_URL" ] && [ -z "$API_KEY" ] && [ -z "$MODELS" ]; then
+  CONFIG_ARGS=()
+fi
 if [ -n "$PROVIDER" ]; then CONFIG_ARGS+=(--provider "$PROVIDER"); fi
 if [ -n "$API_TYPE" ]; then CONFIG_ARGS+=(--api-type "$API_TYPE"); fi
 if [ -n "$DEFAULT_MODEL" ]; then CONFIG_ARGS+=(--default-model "$DEFAULT_MODEL"); fi
 if [ "$NO_DEFAULT" -eq 1 ]; then CONFIG_ARGS+=(--no-default); fi
 if [ "$DRY_RUN" -eq 1 ]; then CONFIG_ARGS+=(--dry-run); fi
+
+if [ "$NO_AGENT_CONFIG" -eq 0 ]; then
+  for item in "${CATEGORIES[@]+"${CATEGORIES[@]}"}"; do CONFIG_ARGS+=(--category "$item"); done
+  for item in "${AGENTS[@]+"${AGENTS[@]}"}"; do CONFIG_ARGS+=(--agent "$item"); done
+  for item in "${TASKS[@]+"${TASKS[@]}"}"; do CONFIG_ARGS+=(--task "$item"); done
+  for item in "${TEAMS[@]+"${TEAMS[@]}"}"; do CONFIG_ARGS+=(--team "$item"); done
+  for item in "${SET_JSONS[@]+"${SET_JSONS[@]}"}"; do CONFIG_ARGS+=(--set-json "$item"); done
+  if [ -n "$MEMORY" ]; then CONFIG_ARGS+=(--memory "$MEMORY"); fi
+  if [ -n "$OMO_JSON" ]; then CONFIG_ARGS+=(--omo-json "$OMO_JSON"); fi
+fi
+if [ "$NO_AGENT_CONFIG" -eq 1 ]; then CONFIG_ARGS+=(--no-agent-config); fi
 
 info "writing config"
 run_config "${CONFIG_ARGS[@]}"
