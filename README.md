@@ -1,27 +1,41 @@
+<div align="center">
+
 # omo-setup
 
+**一键安装并配置 [OmO](https://omo.dev) 的跨平台脚本。**
+
+跑一条命令，剩下的交给向导 —— 检测、安装、填写 base URL / API key / 模型，全程有提示，无需背参数。
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#快速开始)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#-快速开始)
 [![Shell](https://img.shields.io/badge/shell-bash%20%7C%20PowerShell-4EAA25)](./omo-setup.sh)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-339933)](https://nodejs.org)
 
-一键安装并配置 [OmO](https://omo.dev)（OmO Native / `omo` 命令）的跨平台脚本。
+</div>
 
-- **交互式**：直接运行，脚本一步一步引导你填写 base URL、API key、模型等，无需背命令。
-- **智能检测**：已安装 `omo` 就跳过安装，未安装则询问后自动安装。
-- **跨平台**：Linux / macOS 用 `omo-setup.sh`，Windows 用 `omo-setup.ps1`，配置逻辑共用 `omo-config.mjs`。
+---
 
-## 目录
+## ✨ 特性
 
-- [快速开始](#快速开始)
-- [脚本流程](#脚本流程)
-- [写入的配置文件](#写入的配置文件)
-- [非交互模式（脚本 / CI）](#非交互模式脚本--ci)
-- [参数](#参数)
-- [依赖](#依赖)
-- [常见问题](#常见问题)
+| 特性 | 说明 |
+| --- | --- |
+| 🧭 **交互式** | 直接运行即可，脚本逐步引导你填写 base URL、API key、模型等，无需记命令。 |
+| 🔍 **智能检测** | 已安装 `omo` 就跳过安装；未安装则询问后自动安装。 |
+| 🖥️ **跨平台** | Linux / macOS 用 `omo-setup.sh`，Windows 用 `omo-setup.ps1`，配置逻辑共用 `omo-config.mjs`。 |
+| 🔒 **安全写入** | 确认后才写盘，自动备份原配置，并与已有 provider **合并**而非覆盖。 |
+
+## 📑 目录
+
+- [快速开始](#-快速开始)
+- [脚本流程](#-脚本流程)
+- [写入的配置文件](#-写入的配置文件)
+- [非交互模式（脚本 / CI）](#-非交互模式脚本--ci)
+- [参数](#-参数)
+- [依赖](#-依赖)
+- [常见问题](#-常见问题)
 - [License](#license)
 
-## 快速开始
+## 🚀 快速开始
 
 ### 远程一键运行（推荐）
 
@@ -33,13 +47,13 @@
 curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.sh | bash
 ```
 
-**Windows (PowerShell)**
+**Windows（PowerShell）**
 
 ```powershell
 irm https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.ps1 | iex
 ```
 
-脚本运行时会自动下载配套的 `omo-config.mjs`（无需手动准备），并在当前终端逐步提示输入。
+> 脚本运行时会自动下载配套的 `omo-config.mjs`（无需手动准备），并在当前终端逐步提示输入。
 
 ### 本地运行
 
@@ -86,19 +100,19 @@ baseUrl    : https://api.example.com/v1
 omo config updated.
 ```
 
-## 脚本流程
+## 🔧 脚本流程
 
-1. **检测 omo**：在 `PATH` 中查找 `omo`（并兜底检查 `~/.bun/bin`、`~/.local/bin`、`~/.omo/bin` 等常见目录）。
+1. **检测 omo** —— 在 `PATH` 中查找 `omo`（并兜底检查 `~/.bun/bin`、`~/.local/bin`、`~/.omo/bin` 等常见目录）。
    - 已安装 → 打印版本并**跳过**安装。
    - 未安装 → 询问是否安装，确认后运行官方安装脚本 `curl -fsSL https://get.omo.dev/install.sh | bash`（Windows：`irm https://get.omo.dev/install.ps1 | iex`）；失败时回退到 `bun add -g omo-ai` / `npm i -g omo-ai`。
-2. **逐步配置**：依次询问 base URL、API key（隐藏输入）、模型列表、provider 名称、API 协议、默认模型，最后打印摘要并请求确认。
-3. **写入配置**：确认后才写盘；输入 `n` 取消且不产生任何文件。
+2. **逐步配置** —— 依次询问 base URL、API key（隐藏输入）、模型列表、provider 名称、API 协议、默认模型，最后打印摘要并请求确认。
+3. **写入配置** —— 确认后才写盘；输入 `n` 取消且不产生任何文件。
 
-## 写入的配置文件
+## 📦 写入的配置文件
 
 默认目录 `~/.omo/agent`（可用 `OMO_CODING_AGENT_DIR` 覆盖）。
 
-`models.json` — 新增/更新 `providers.<名称>`：
+`models.json` —— 新增/更新 `providers.<名称>`：
 
 ```json
 {
@@ -113,7 +127,7 @@ omo config updated.
 }
 ```
 
-`settings.json` — 设置默认模型：
+`settings.json` —— 设置默认模型：
 
 ```json
 {
@@ -122,16 +136,20 @@ omo config updated.
 }
 ```
 
-写入前会自动生成时间戳备份，并与已有 provider **合并**而非覆盖。
+> 写入前会自动生成时间戳备份，并与已有 provider **合并**而非覆盖。
 
-## 非交互模式（脚本 / CI）
+## 🤖 非交互模式（脚本 / CI）
 
 一次性传入参数或环境变量，脚本会跳过向导：
+
+**命令行参数**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.sh | bash -s -- \
   --base-url https://api.example.com/v1 --api-key sk-xxx --models gpt-4o,gpt-4o-mini
 ```
+
+**环境变量**
 
 ```bash
 OMO_BASE_URL=https://api.example.com/v1 \
@@ -140,13 +158,15 @@ OMO_MODELS=gpt-4o \
 ./omo-setup.sh
 ```
 
+**Windows（PowerShell）**
+
 ```powershell
 .\omo-setup.ps1 -BaseUrl https://api.example.com/v1 -ApiKey sk-xxx -Models gpt-4o,gpt-4o-mini
 ```
 
-想强制运行向导，加 `-i` / `--interactive`（PowerShell：`-Interactive`）。
+> 想强制运行向导，加 `-i` / `--interactive`（PowerShell：`-Interactive`）。
 
-## 参数
+## 📋 参数
 
 | 参数 | 环境变量 | 说明 |
 | --- | --- | --- |
@@ -162,17 +182,23 @@ OMO_MODELS=gpt-4o \
 | `--skip-install` / `-SkipInstall` | — | 只配置，不做安装检测 |
 | `--allow-root` | `OMO_INSTALL_ALLOW_SUDO=1` | 允许以 root 安装 omo（仅 `omo-setup.sh`） |
 
-## 依赖
+## 🧩 依赖
 
 - 配置写入需要 **Node.js >= 18** 或 **Bun**（脚本会自动选择可用的运行时）。
 - 安装 omo 需要 `curl`（推荐）、或 `bun` / `npm`。
 
-## 常见问题
+## ❓ 常见问题
 
-**远程执行时 API key 输入会卡住？**
+<details>
+<summary><b>远程执行时 API key 输入会卡住？</b></summary>
+
 向导从 `/dev/tty` 读取输入，因此 `curl | bash` 也能正常交互。若在无终端的 CI 环境运行，请改用非交互模式传入 `--base-url/--api-key/--models`。
 
-**以 root 运行时报 `refusing to run as root`？**
+</details>
+
+<details>
+<summary><b>以 root 运行时报 <code>refusing to run as root</code>？</b></summary>
+
 omo 官方安装器默认拒绝 root。脚本会检测到这一点并提示：可确认后自动加上 `OMO_INSTALL_ALLOW_SUDO=1` 继续安装，或改用非 root 用户运行。非交互场景直接传 `--allow-root`（等价于 `OMO_INSTALL_ALLOW_SUDO=1`）：
 
 ```bash
@@ -181,21 +207,39 @@ curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.s
 
 注意：以 root 安装会把配置写到 `/root/.omo`；多用户机器更推荐用普通用户运行。
 
-**`omo` 装好了但提示找不到？**
+</details>
+
+<details>
+<summary><b><code>omo</code> 装好了但提示找不到？</b></summary>
+
 新开的终端才能刷新 `PATH`。也可以手动执行 `export PATH="$HOME/.bun/bin:$PATH"`（或重启终端）后重试。
 
-**想单独使用配置脚本，不走向导？**
+</details>
+
+<details>
+<summary><b>想单独使用配置脚本，不走向导？</b></summary>
+
 直接调用共享脚本：
 
 ```bash
 node omo-config.mjs --base-url https://api.example.com/v1 --api-key sk-xxx --models gpt-4o
 ```
 
-**`--dry-run` 会写文件吗？**
+</details>
+
+<details>
+<summary><b><code>--dry-run</code> 会写文件吗？</b></summary>
+
 不会。只打印将要写入的路径与内容摘要。
 
-**配置文件在哪？**
+</details>
+
+<details>
+<summary><b>配置文件在哪？</b></summary>
+
 默认 `~/.omo/agent`；可用环境变量 `OMO_CODING_AGENT_DIR`（旧版：`SENPI_CODING_AGENT_DIR` / `PI_CODING_AGENT_DIR`）覆盖。
+
+</details>
 
 ## License
 
