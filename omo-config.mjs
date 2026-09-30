@@ -59,10 +59,196 @@ const REPEATABLE = new Set([
   "task",
   "team",
   "set-json",
+  "preset",
 ]);
 
 const SCHEMA_URL =
   "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/omo.schema.json";
+
+// The Recommended ladder, in the maintainers' order of preference. Sources:
+// docs/guide/agent-model-matching.md in code-yeongyu/oh-my-openagent.
+const LADDER = [
+  "claude-opus-5-5",
+  "claude-fable-5-1",
+  "kimi-k3",
+  "gpt-6-astra",
+  "gpt-6.1-sol",
+  "gpt-6-sol",
+  "glm-5.3",
+];
+
+// Official example configurations from the Agent-Model Matching guide, adapted
+// as starting templates. Provider prefixes match the guide; adjust to the
+// providers you are actually logged in to.
+const PRESETS = {
+  "claude-openai": {
+    title: "Claude plus OpenAI (official Example A)",
+    patch: {
+      agents: {
+        "plan-consultant": { model: "anthropic/claude-opus-5-5", reasoning: "high" },
+        "plan-reviewer": { model: "openai/gpt-6-astra", reasoning: "xhigh" },
+        explore: { model: "openai/gpt-6-luna-fast", reasoning: "low" },
+        librarian: { model: "openai/gpt-6-luna-fast", reasoning: "low" },
+      },
+      categories: {
+        "visual-engineering": { model: "anthropic/claude-fable-5-1", reasoning: "max" },
+        "deep-high": { model: "openai/gpt-6-astra", reasoning: "xhigh" },
+        ultrabrain: { model: "openai/gpt-6-astra", reasoning: "max" },
+        "unspecified-high": { model: "anthropic/claude-opus-5-5", reasoning: "medium" },
+      },
+    },
+  },
+  "kimi-glm": {
+    title: "Kimi and GLM for Claude-shaped roles (official Example B)",
+    patch: {
+      agents: {
+        "plan-consultant": { model: "kimi-for-coding/kimi-k3" },
+      },
+      categories: {
+        "visual-engineering": { model: "kimi-for-coding/kimi-k3", reasoning: "max" },
+        "unspecified-high": {
+          models: [
+            { model: "zai-coding-plan/glm-5.3", reasoning: "max" },
+            "kimi-for-coding/kimi-k3",
+          ],
+        },
+      },
+    },
+  },
+  "deepseek-alternative": {
+    title: "DeepSeek as a GPT alternative in a chain (official Example C)",
+    patch: {
+      categories: {
+        "deep-low": {
+          models: [
+            { model: "openai/gpt-6-sol", reasoning: "medium" },
+            { model: "deepseek/deepseek-v4-pro", reasoning: "max" },
+          ],
+        },
+      },
+    },
+  },
+};
+
+const ADVICE = `OmO multi-agent recommendations (from the official Agent-Model Matching guide)
+https://github.com/code-yeongyu/oh-my-openagent/blob/dev/docs/guide/agent-model-matching.md
+
+Most people can skip all of this: OmO Native already picks a model for every
+category and curated agent from its own chain against the providers you have
+connected. Only override when you want to change a default.
+
+1. Recommended main-agent ladder (maintainers' order of preference)
+   Claude Opus 5.5 -> Claude Fable 5.1 -> Kimi K3 -> GPT-6 Astra
+   -> GPT-6.1 Sol -> GPT-6 Sol -> GLM 5.3
+   A model outside this ladder is not supported as the main agent; it may look
+   fine for a few turns, then fall apart. Set it with model_profile, not here.
+
+2. Match the family to the role
+   - Claude-family: the main agent and plan-consultant (communicative roles).
+   - GPT-family: plan-reviewer, ultrabrain, deep-low, deep-high.
+   - Kimi K3 / GLM 5.3: Claude-shaped roles, lower on the ladder (thinly validated).
+   - Small/fast models: explore, librarian, quick (search needs speed, not depth).
+
+3. Safe overrides (same family and role shape)
+   - plan-consultant: any Claude-family model, Kimi K3, GLM 5.2/5.3
+   - plan-reviewer: GPT-6 Astra (xhigh/high), Claude Opus 5.5 (max) as fallback
+   - visual-engineering, artistry: Claude Fable 5.1 / Opus 5.5 / Kimi K3
+   - writing: Claude Opus 5.5 or Claude Opus 4.6
+
+4. Risky (family or role mismatch) - the installer warns on these
+   - ultrabrain, deep-low, deep-high on Claude or Kimi (built for GPT)
+   - plan-reviewer on a small/fast model (it rubber-stamps)
+   - explore or librarian on Opus/Fable (massive cost waste)
+   - visual-engineering on utility or search models
+
+5. Where to spend one scarce premium model
+   Prefer low-frequency, high-leverage roles: plan-consultant (once per plan)
+   and plan-reviewer (once per round). Avoid the high-volume execution slots:
+   the category worker, explore and librarian.
+
+Start from an official example with --preset claude-openai | kimi-glm |
+ deepseek-alternative, then adjust the provider prefixes to your own setup.`;
+
+// Family detection by model id substring, most specific first.
+function detectFamily(model) {
+  const m = String(model).toLowerCase();
+  if (m.includes("fable")) return "claude";
+  if (m.includes("claude") || m.includes("opus") || m.includes("sonnet") || m.includes("haiku")) return "claude";
+  if (m.includes("gpt") || m.includes("o1") || m.includes("o3")) return "gpt";
+  if (m.includes("kimi") || m.includes("moonshot")) return "kimi";
+  if (m.includes("glm") || m.includes("zai")) return "glm";
+  if (m.includes("deepseek")) return "deepseek";
+  if (m.includes("grok")) return "grok";
+  if (m.includes("qwen")) return "qwen";
+  if (m.includes("mimo") || m.includes("xiaomi")) return "mimo";
+  if (m.includes("gemini")) return "gemini";
+  return "unknown";
+}
+
+function isSmallOrFast(model) {
+  return /(haiku|luna|nano|flash|mini|fast|small|highspeed)/i.test(String(model));
+}
+
+function isOpusOrFable(model) {
+  return /(opus|fable)/i.test(String(model));
+}
+
+function modelOf(entry) {
+  if (typeof entry === "string") return entry;
+  if (entry && typeof entry === "object") {
+    if (typeof entry.model === "string") return entry.model;
+    if (Array.isArray(entry.models) && entry.models.length) return modelOf(entry.models[0]);
+  }
+  return "";
+}
+
+// Apply the official safe/risky rules to the pins the user just set.
+function checkRisks(patch) {
+  const warnings = [];
+  const GPT_ONLY = new Set(["ultrabrain", "deep-low", "deep-high"]);
+
+  for (const [name, cfg] of Object.entries(patch.categories || {})) {
+    const model = modelOf(cfg);
+    const family = detectFamily(model);
+    if (GPT_ONLY.has(name) && (family === "claude" || family === "kimi")) {
+      warnings.push(
+        `category "${name}" is built for GPT's autonomous style; ${model} ` +
+          `(${family}) is a risky fit - other families finish eventually but don't shine.`,
+      );
+    }
+    if (name === "visual-engineering" && !["claude", "kimi"].includes(family)) {
+      warnings.push(
+        `category "visual-engineering" should stay on the Fable 5.1 -> Opus 5.5 -> ` +
+          `Kimi K3 chain; ${model} (${family}) is a risky fit.`,
+      );
+    }
+    if (name === "writing" && family !== "claude") {
+      warnings.push(
+        `category "writing" is Claude-only upstream and has no cross-family ` +
+          `fallback; ${model} (${family}) is a risky fit.`,
+      );
+    }
+  }
+
+  for (const [name, cfg] of Object.entries(patch.agents || {})) {
+    const model = modelOf(cfg);
+    const family = detectFamily(model);
+    if (name === "plan-reviewer" && isSmallOrFast(model)) {
+      warnings.push(
+        `agent "plan-reviewer" on ${model} is risky: review needs sustained ` +
+          `reasoning, and small models drift and rubber-stamp.`,
+      );
+    }
+    if ((name === "explore" || name === "librarian") && isOpusOrFable(model)) {
+      warnings.push(
+        `agent "${name}" on ${model} is a cost waste: search needs speed, not ` +
+          `intelligence. Prefer a small/fast model.`,
+      );
+    }
+  }
+
+  return warnings;
+}
 
 function parseArgs(argv) {
   const out = {};
@@ -233,6 +419,7 @@ function isPlainObject(v) {
 // Deep merge: plain objects merge recursively; arrays and scalars replace.
 // __proto__ / prototype / constructor are dropped (prototype-pollution guard).
 function deepMerge(target, patch) {
+  if (!isPlainObject(patch)) return patch;
   const out = isPlainObject(target) ? { ...target } : {};
   for (const [k, v] of Object.entries(patch)) {
     if (k === "__proto__" || k === "prototype" || k === "constructor") continue;
@@ -376,30 +563,64 @@ function parseTeams(list) {
   return out;
 }
 
+// Merge two omo.jsonc patches. Record sections (categories/agents/teams) merge
+// at key level so a later entry replaces an earlier one wholesale; other
+// objects (task, memory, arbitrary keys) deep-merge.
+function mergePatch(base, extra) {
+  const out = { ...base };
+  for (const [k, v] of Object.entries(extra)) {
+    if (k === "__proto__" || k === "prototype" || k === "constructor") continue;
+    if (["categories", "agents", "teams"].includes(k) && isPlainObject(v)) {
+      out[k] = { ...(isPlainObject(out[k]) ? out[k] : {}), ...v };
+    } else {
+      out[k] = deepMerge(out[k], v);
+    }
+  }
+  return out;
+}
+
 // Build the omo.jsonc patch from the multi-agent flags. Returns null when no
 // multi-agent flag was given, so omo.jsonc is left untouched.
 function buildAgentPatch(args) {
-  const patch = {};
+  let patch = {};
+
+  for (const name of args.preset || []) {
+    const preset = PRESETS[name];
+    if (!preset) {
+      throw new Error(
+        `unknown --preset "${name}" (use: ${Object.keys(PRESETS).join(", ")})`,
+      );
+    }
+    patch = mergePatch(patch, preset.patch);
+  }
 
   const categories = parsePins(args.category, "--category");
-  if (Object.keys(categories).length) patch.categories = categories;
+  if (Object.keys(categories).length) {
+    patch.categories = { ...(patch.categories || {}), ...categories };
+  }
 
   const agents = parsePins(args.agent, "--agent");
-  if (Object.keys(agents).length) patch.agents = agents;
+  if (Object.keys(agents).length) {
+    patch.agents = { ...(patch.agents || {}), ...agents };
+  }
 
   const task = parseTaskSettings(args.task);
-  if (Object.keys(task).length) patch.task = task;
+  if (Object.keys(task).length) {
+    patch.task = deepMerge(patch.task || {}, task);
+  }
 
   if (args.memory !== undefined) {
     const on = String(args.memory).toLowerCase();
     if (!["on", "off", "true", "false", "yes", "no", "1", "0"].includes(on)) {
       throw new Error(`invalid --memory "${args.memory}" (use on or off)`);
     }
-    patch.memory = { enabled: ["on", "true", "yes", "1"].includes(on) };
+    patch.memory = deepMerge(patch.memory || {}, { enabled: ["on", "true", "yes", "1"].includes(on) });
   }
 
   const teams = parseTeams(args.team);
-  if (Object.keys(teams).length) patch.teams = teams;
+  if (Object.keys(teams).length) {
+    patch.teams = { ...(patch.teams || {}), ...teams };
+  }
 
   for (const raw of args["set-json"] || []) {
     let value;
@@ -411,7 +632,7 @@ function buildAgentPatch(args) {
     if (!isPlainObject(value)) {
       throw new Error("invalid --set-json: value must be a JSON object");
     }
-    Object.assign(patch, deepMerge(patch, value));
+    Object.assign(patch, mergePatch(patch, value));
   }
 
   if (args["omo-json"] !== undefined) {
@@ -425,7 +646,7 @@ function buildAgentPatch(args) {
     if (!isPlainObject(value)) {
       throw new Error(`--omo-json file must contain a JSON object: ${file}`);
     }
-    Object.assign(patch, deepMerge(patch, value));
+    Object.assign(patch, mergePatch(patch, value));
   }
 
   return Object.keys(patch).length ? patch : null;
@@ -471,6 +692,14 @@ function main() {
   const dryRun = args["dry-run"] === "true";
   const noDefault = args["no-default"] === "true";
   const noAgentConfig = args["no-agent-config"] === "true";
+
+  if (args.advice === "true") {
+    console.log(ADVICE);
+    console.log("");
+    if (!Object.keys(PRESETS).length) return;
+    console.log("Available presets: " + Object.keys(PRESETS).join(", "));
+    return;
+  }
 
   const agentPatch = noAgentConfig ? null : buildAgentPatch(args);
   const wantsProvider = Boolean(baseUrl || apiKey || models.length);
@@ -524,12 +753,15 @@ function main() {
     ...(agentPatch ? { omoJsonc, multiAgent: agentPatch } : {}),
   };
 
+  const risks = agentPatch && args["no-advice"] !== "true" ? checkRisks(agentPatch) : [];
+
   if (dryRun) {
     if (wantsProvider) {
       console.log("[dry-run] would update " + modelsFile);
       if (!noDefault) console.log("[dry-run] would update " + settingsFile);
     }
     if (agentPatch) console.log("[dry-run] would update " + omoJsonc);
+    for (const w of risks) console.log("[advice] " + w);
     console.log(JSON.stringify(plan, null, 2));
     return;
   }
@@ -576,6 +808,7 @@ function main() {
     console.log("multi-agent config:");
     for (const line of summarizeAgentPatch(agentPatch)) console.log(line);
     console.log(`omo.jsonc  : ${omoJsonc}${backupPath ? ` (backup: ${path.basename(backupPath)})` : ""}`);
+    for (const w of risks) console.log(`advice     : ${w}`);
   }
 
   console.log("omo config updated.");

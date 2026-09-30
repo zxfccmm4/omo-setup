@@ -26,6 +26,9 @@
 #   --allow-root          allow installing omo as root (sets OMO_INSTALL_ALLOW_SUDO=1)
 #
 # Multi-agent flags (write ~/.omo/omo.jsonc; repeatable where noted):
+#   --advice                        print the official recommendations and exit
+#   --preset NAME                   start from an official example: claude-openai,
+#                                   kimi-glm, deepseek-alternative (repeatable)
 #   --category NAME=MODEL[:LEVEL]   pin a task category (repeatable)
 #   --agent NAME=MODEL[:LEVEL]      pin an agent, e.g. explore (repeatable)
 #   --task KEY=VALUE                set a task engine key (repeatable)
@@ -34,6 +37,7 @@
 #   --set-json JSON                 deep-merge arbitrary JSON into omo.jsonc
 #   --omo-json FILE                 deep-merge a JSON/JSONC file into omo.jsonc
 #   --no-agent-config               never touch omo.jsonc
+#   --no-advice                     skip the risky-combination advice lines
 #   -h, --help            show this help
 #
 set -euo pipefail
@@ -59,11 +63,14 @@ TMP_CONFIG=""
 MEMORY=""
 OMO_JSON=""
 NO_AGENT_CONFIG=0
+NO_ADVICE=0
+SHOW_ADVICE=0
 CATEGORIES=()
 AGENTS=()
 TASKS=()
 TEAMS=()
 SET_JSONS=()
+PRESETS=()
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
@@ -106,6 +113,9 @@ while [ $# -gt 0 ]; do
     --memory) MEMORY="$2"; shift 2 ;;
     --omo-json) OMO_JSON="$2"; shift 2 ;;
     --no-agent-config) NO_AGENT_CONFIG=1; shift ;;
+    --advice) SHOW_ADVICE=1; shift ;;
+    --no-advice) NO_ADVICE=1; shift ;;
+    --preset) PRESETS+=("$2"); shift 2 ;;
     --category) CATEGORIES+=("$2"); shift 2 ;;
     --agent) AGENTS+=("$2"); shift 2 ;;
     --task) TASKS+=("$2"); shift 2 ;;
@@ -118,6 +128,7 @@ while [ $# -gt 0 ]; do
     --task=*) TASKS+=("${1#*=}"); shift ;;
     --team=*) TEAMS+=("${1#*=}"); shift ;;
     --set-json=*) SET_JSONS+=("${1#*=}"); shift ;;
+    --preset=*) PRESETS+=("${1#*=}"); shift ;;
     *) die "unknown option: $1" ;;
   esac
 done
@@ -261,11 +272,32 @@ wizard() {
   fi
 }
 
+show_advice() {
+  ensure_config_script
+  if command -v node >/dev/null 2>&1; then
+    node "$CONFIG_SCRIPT" --advice
+  elif command -v bun >/dev/null 2>&1; then
+    bun "$CONFIG_SCRIPT" --advice
+  else
+    die "need node or bun to show recommendations"
+  fi
+}
+
 agent_wizard() {
   local v
   printf '\n' >&2
   info "multi-agent setup (blank = keep current / skip)"
   printf '\n' >&2
+
+  printf '0) Start from an official example preset?\n' >&2
+  printf '   1) claude-openai  2) kimi-glm  3) deepseek-alternative  4) none (default)\n' >&2
+  v="$(ask '   choose [1-4]' '4')"
+  case "$v" in
+    1) PRESETS+=(claude-openai) ;;
+    2) PRESETS+=(kimi-glm) ;;
+    3) PRESETS+=(deepseek-alternative) ;;
+    *) : ;;
+  esac
 
   v="$(ask 'a) Pin a task category as NAME=MODEL[:level] (e.g. quick=glm-5.3-flash)' '')"
   while [ -n "$v" ]; do
@@ -321,13 +353,17 @@ fi
 
 HAVE_AGENT_FLAGS=0
 if [ ${#CATEGORIES[@]} -gt 0 ] || [ ${#AGENTS[@]} -gt 0 ] || [ ${#TASKS[@]} -gt 0 ] || \
-   [ ${#TEAMS[@]} -gt 0 ] || [ ${#SET_JSONS[@]} -gt 0 ] || [ -n "$MEMORY" ] || [ -n "$OMO_JSON" ]; then
+   [ ${#TEAMS[@]} -gt 0 ] || [ ${#SET_JSONS[@]} -gt 0 ] || [ ${#PRESETS[@]} -gt 0 ] || \
+   [ -n "$MEMORY" ] || [ -n "$OMO_JSON" ]; then
   HAVE_AGENT_FLAGS=1
 fi
 
 # Run the provider wizard when forced, when provider flags were given but are
 # incomplete, or when nothing at all was supplied (the interactive default).
-if [ "$FORCE_INTERACTIVE" -eq 1 ]; then
+# --advice is a pure print command, so it never runs the wizard.
+if [ "$SHOW_ADVICE" -eq 1 ]; then
+  :
+elif [ "$FORCE_INTERACTIVE" -eq 1 ]; then
   wizard
 elif [ -n "$BASE_URL" ] || [ -n "$API_KEY" ] || [ -n "$MODELS" ]; then
   if [ -z "$BASE_URL" ] || [ -z "$API_KEY" ] || [ -z "$MODELS" ]; then wizard; fi
@@ -347,7 +383,13 @@ if [ -n "$DEFAULT_MODEL" ]; then CONFIG_ARGS+=(--default-model "$DEFAULT_MODEL")
 if [ "$NO_DEFAULT" -eq 1 ]; then CONFIG_ARGS+=(--no-default); fi
 if [ "$DRY_RUN" -eq 1 ]; then CONFIG_ARGS+=(--dry-run); fi
 
+if [ "$SHOW_ADVICE" -eq 1 ]; then
+  show_advice
+  exit 0
+fi
+
 if [ "$NO_AGENT_CONFIG" -eq 0 ]; then
+  for item in "${PRESETS[@]+"${PRESETS[@]}"}"; do CONFIG_ARGS+=(--preset "$item"); done
   for item in "${CATEGORIES[@]+"${CATEGORIES[@]}"}"; do CONFIG_ARGS+=(--category "$item"); done
   for item in "${AGENTS[@]+"${AGENTS[@]}"}"; do CONFIG_ARGS+=(--agent "$item"); done
   for item in "${TASKS[@]+"${TASKS[@]}"}"; do CONFIG_ARGS+=(--task "$item"); done
@@ -357,6 +399,7 @@ if [ "$NO_AGENT_CONFIG" -eq 0 ]; then
   if [ -n "$OMO_JSON" ]; then CONFIG_ARGS+=(--omo-json "$OMO_JSON"); fi
 fi
 if [ "$NO_AGENT_CONFIG" -eq 1 ]; then CONFIG_ARGS+=(--no-agent-config); fi
+if [ "$NO_ADVICE" -eq 1 ]; then CONFIG_ARGS+=(--no-advice); fi
 
 info "writing config"
 run_config "${CONFIG_ARGS[@]}"

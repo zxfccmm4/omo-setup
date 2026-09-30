@@ -144,6 +144,39 @@ omo config updated.
 
 除了 provider，脚本还能把 OmO 的多智能体功能写进 `~/.omo/omo.jsonc`（该文件在 OmO 根目录，是 `agent/` 的上一级）。向导第 8 步会询问是否配置，非交互模式则用下面的参数。
 
+### 先看官方建议
+
+脚本内置了官方 [Agent-Model Matching 指南](https://github.com/code-yeongyu/oh-my-openagent/blob/dev/docs/guide/agent-model-matching.md) 的摘要，随时可查：
+
+```bash
+./omo-setup.sh --advice
+```
+
+核心结论（**大多数人不配也能用**，OmO Native 会自动为每个分类和代理选模型）：
+
+- **主代理推荐梯队**（按优先级）：Claude Opus 5.5 → Claude Fable 5.1 → Kimi K3 → GPT-6 Astra → GPT-6.1 Sol → GPT-6 Sol → GLM 5.3。梯队外的模型官方不保证。
+- **模型家族要对得上角色**：Claude 系 → 主代理与 `plan-consultant`；GPT 系 → `plan-reviewer`、`ultrabrain`、`deep-low`、`deep-high`；小而快的模型 → `explore`、`librarian`、`quick`。
+- **别把贵模型放错位置**：`explore`/`librarian` 用 Opus/Fable 是巨大的浪费；`plan-reviewer` 用小模型会沦为橡皮图章。
+- 配置时脚本会自动检查这些**风险组合**并打印 `advice:` 提示（用 `--no-advice` 关闭）。
+
+### 从官方示例起步（presets）
+
+内置三个官方示例，可直接当模板再微调 provider 前缀：
+
+```bash
+./omo-setup.sh --preset claude-openai        # 官方 Example A：Claude + OpenAI
+./omo-setup.sh --preset kimi-glm             # 官方 Example B：Kimi/GLM 接管 Claude 类角色
+./omo-setup.sh --preset deepseek-alternative # 官方 Example C：DeepSeek 作 GPT 备用链
+```
+
+preset 与你自己的参数可以叠加，且**你的显式指定优先**：
+
+```bash
+./omo-setup.sh --preset claude-openai --category deep-high=anthropic/claude-opus-5-5:max
+```
+
+向导第 8 步的第一步（`0)`）也会询问是否选用某个 preset。
+
 只写了多智能体参数、没写 provider 参数时，脚本会跳过 provider 向导，只更新 `omo.jsonc`。
 
 **任务分类（categories）** —— 给某一类任务指定模型与推理档位：
@@ -235,6 +268,9 @@ OMO_MODELS=gpt-4o \
 | `--set-json` / `-SetJson` | — | 深度合并任意 JSON 片段，可重复 |
 | `--omo-json` / `-OmoJson` | — | 深度合并一个 JSON/JSONC 文件 |
 | `--no-agent-config` / `-NoAgentConfig` | — | 完全不修改 `omo.jsonc` |
+| `--advice` / `-Advice` | — | 打印官方多智能体推荐并退出 |
+| `--preset` / `-Preset` | — | 从官方示例起步：`claude-openai` \| `kimi-glm` \| `deepseek-alternative`，可重复 |
+| `--no-advice` / `-NoAdvice` | — | 关闭风险组合提示 |
 
 ## 🧩 依赖
 

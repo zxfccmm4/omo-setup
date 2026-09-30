@@ -24,11 +24,14 @@ param(
   [string]$DefaultModel,
   [string]$Memory,
   [string]$OmoJson,
+  [string[]]$Preset = @(),
   [string[]]$Category = @(),
   [string[]]$Agent = @(),
   [string[]]$TaskSetting = @(),
   [string[]]$Team = @(),
   [string[]]$SetJson = @(),
+  [switch]$Advice,
+  [switch]$NoAdvice,
   [switch]$NoAgentConfig,
   [switch]$Interactive,
   [switch]$NoDefault,
@@ -149,6 +152,15 @@ function Invoke-AgentWizard {
   Info 'multi-agent setup (blank = keep current / skip)'
   Write-Host ''
 
+  Write-Host '0) Start from an official example preset?'
+  Write-Host '   1) claude-openai  2) kimi-glm  3) deepseek-alternative  4) none (default)'
+  $v = Ask '   choose [1-4]' '4'
+  switch ($v) {
+    '1' { $script:Preset += 'claude-openai' }
+    '2' { $script:Preset += 'kimi-glm' }
+    '3' { $script:Preset += 'deepseek-alternative' }
+  }
+
   $v = Ask 'a) Pin a task category as NAME=MODEL[:level] (e.g. quick=glm-5.3-flash)' $null
   while ($v) { $script:Category += $v; $v = Ask '   another category (blank = done)' $null }
 
@@ -183,8 +195,9 @@ if (-not $SkipInstall) {
   Info 'SkipInstall set, not checking installation'
 }
 
-$haveAgentFlags = $NoAgentConfig -or $Category.Count -or $Agent.Count -or $TaskSetting.Count -or $Team.Count -or $SetJson.Count -or $Memory -or $OmoJson
-if ($Interactive) { Invoke-Wizard }
+$haveAgentFlags = $NoAgentConfig -or $Preset.Count -or $Category.Count -or $Agent.Count -or $TaskSetting.Count -or $Team.Count -or $SetJson.Count -or $Memory -or $OmoJson
+if ($Advice) { }
+elseif ($Interactive) { Invoke-Wizard }
 elseif ($BaseUrl -or $ApiKey -or $Models) {
   if (-not $BaseUrl -or -not $ApiKey -or -not $Models) { Invoke-Wizard }
 }
@@ -200,6 +213,7 @@ if ($DefaultModel) { $configArgs += @('--default-model', $DefaultModel) }
 if ($NoDefault)    { $configArgs += '--no-default' }
 if ($DryRun)       { $configArgs += '--dry-run' }
 if (-not $NoAgentConfig) {
+  foreach ($p in $Preset)      { $configArgs += @('--preset', $p) }
   foreach ($c in $Category)    { $configArgs += @('--category', $c) }
   foreach ($a in $Agent)       { $configArgs += @('--agent', $a) }
   foreach ($t in $TaskSetting) { $configArgs += @('--task', $t) }
@@ -210,6 +224,7 @@ if (-not $NoAgentConfig) {
 } else {
   $configArgs += '--no-agent-config'
 }
+if ($NoAdvice) { $configArgs += '--no-advice' }
 
 function Get-ConfigScript {
   if ($ScriptDir) {
@@ -227,6 +242,13 @@ function Get-ConfigScript {
 }
 
 $configScript = Get-ConfigScript
+
+if ($Advice) {
+  if (Get-Command node -ErrorAction SilentlyContinue) { & node $configScript --advice }
+  elseif (Get-Command bun -ErrorAction SilentlyContinue) { & bun $configScript --advice }
+  else { Die 'need node or bun to show recommendations' }
+  exit $LASTEXITCODE
+}
 
 Info 'writing config'
 if (Get-Command node -ErrorAction SilentlyContinue) { & node $configScript @configArgs }
