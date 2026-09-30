@@ -23,6 +23,7 @@
 #   --no-default          do not touch settings.json defaults
 #   --dry-run             print planned changes, write nothing
 #   --skip-install        never install, only configure
+#   --allow-root          allow installing omo as root (sets OMO_INSTALL_ALLOW_SUDO=1)
 #   -h, --help            show this help
 #
 set -euo pipefail
@@ -65,10 +66,11 @@ read_tty() {
 while [ $# -gt 0 ]; do
   case "$1" in
     -i|--interactive) FORCE_INTERACTIVE=1; shift ;;
+    --allow-root) export OMO_INSTALL_ALLOW_SUDO=1; shift ;;
     --skip-install) SKIP_INSTALL=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --no-default) NO_DEFAULT=1; shift ;;
-    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,28p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --base-url) BASE_URL="$2"; shift 2 ;;
     --api-key) API_KEY="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
@@ -118,6 +120,21 @@ find_omo() {
 
 install_omo() {
   info "installing OmO Native"
+  if [ "$(id -u)" -eq 0 ] && [ "${OMO_INSTALL_ALLOW_SUDO:-}" != "1" ]; then
+    warn "the omo installer refuses to run as root"
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+      warn "you are root via sudo; installing as '$SUDO_USER' is recommended"
+    fi
+    if have_tty; then
+      if ask_yes "Continue as root anyway (sets OMO_INSTALL_ALLOW_SUDO=1)?" "y"; then
+        export OMO_INSTALL_ALLOW_SUDO=1
+      else
+        die "aborted: run as a non-root user, or pass --allow-root / set OMO_INSTALL_ALLOW_SUDO=1"
+      fi
+    else
+      die "running as root; pass --allow-root or set OMO_INSTALL_ALLOW_SUDO=1 to override"
+    fi
+  fi
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL https://get.omo.dev/install.sh | bash || die "official installer failed"
   elif command -v bun >/dev/null 2>&1; then

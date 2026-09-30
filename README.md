@@ -160,6 +160,7 @@ OMO_MODELS=gpt-4o \
 | `--no-default` / `-NoDefault` | — | 不修改 `settings.json` 的默认模型 |
 | `--dry-run` / `-DryRun` | — | 只打印将要做的改动，不写盘 |
 | `--skip-install` / `-SkipInstall` | — | 只配置，不做安装检测 |
+| `--allow-root` | `OMO_INSTALL_ALLOW_SUDO=1` | 允许以 root 安装 omo（仅 `omo-setup.sh`） |
 
 ## 依赖
 
@@ -170,6 +171,15 @@ OMO_MODELS=gpt-4o \
 
 **远程执行时 API key 输入会卡住？**
 向导从 `/dev/tty` 读取输入，因此 `curl | bash` 也能正常交互。若在无终端的 CI 环境运行，请改用非交互模式传入 `--base-url/--api-key/--models`。
+
+**以 root 运行时报 `refusing to run as root`？**
+omo 官方安装器默认拒绝 root。脚本会检测到这一点并提示：可确认后自动加上 `OMO_INSTALL_ALLOW_SUDO=1` 继续安装，或改用非 root 用户运行。非交互场景直接传 `--allow-root`（等价于 `OMO_INSTALL_ALLOW_SUDO=1`）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.sh | bash -s -- --allow-root
+```
+
+注意：以 root 安装会把配置写到 `/root/.omo`；多用户机器更推荐用普通用户运行。
 
 **`omo` 装好了但提示找不到？**
 新开的终端才能刷新 `PATH`。也可以手动执行 `export PATH="$HOME/.bun/bin:$PATH"`（或重启终端）后重试。
