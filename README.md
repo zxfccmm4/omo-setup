@@ -1,3 +1,5 @@
+<a id="readme-top"></a>
+
 <div align="center">
 
 # omo-setup
@@ -6,14 +8,36 @@
 
 跑一条命令，剩下的交给向导 —— 检测、安装、填写 base URL / API key / 模型，全程有提示，无需背参数。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](#-快速开始)
-[![Shell](https://img.shields.io/badge/shell-bash%20%7C%20PowerShell-4EAA25)](./omo-setup.sh)
-[![Node](https://img.shields.io/badge/node-%3E%3D18-339933)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](./LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)](#-快速开始)
+[![Shell](https://img.shields.io/badge/shell-bash%20%7C%20PowerShell-4EAA25?style=flat-square)](./omo-setup.sh)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square)](https://nodejs.org)
+[![Stars](https://img.shields.io/github/stars/zxfccmm4/omo-setup?style=flat-square)](https://github.com/zxfccmm4/omo-setup/stargazers)
+[![Issues](https://img.shields.io/github/issues/zxfccmm4/omo-setup?style=flat-square)](https://github.com/zxfccmm4/omo-setup/issues)
+
+[快速开始](#-快速开始) · [多智能体](#-多智能体配置) · [参数](#-参数) · [常见问题](#-常见问题)
 
 </div>
 
 ---
+
+## ⚡ 30 秒上手
+
+**macOS / Linux**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.sh | bash
+```
+
+**Windows（PowerShell）**
+
+```powershell
+irm https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.ps1 | iex
+```
+
+> 脚本会检测并（按需）安装 `omo`，然后逐步提示你填写 base URL、API key、模型等。下面有[完整说明](#-快速开始)。
+
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
 ## ✨ 特性
 
@@ -25,17 +49,24 @@
 | 🖥️ **跨平台** | Linux / macOS 用 `omo-setup.sh`，Windows 用 `omo-setup.ps1`，配置逻辑共用 `omo-config.mjs`。 |
 | 🔒 **安全写入** | 确认后才写盘，自动备份原配置，并与已有 provider **合并**而非覆盖。 |
 
-## 📑 目录
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
-- [快速开始](#-快速开始)
-- [脚本流程](#-脚本流程)
-- [写入的配置文件](#-写入的配置文件)
-- [多智能体配置](#-多智能体配置)
-- [非交互模式（脚本 / CI）](#-非交互模式脚本--ci)
-- [参数](#-参数)
-- [依赖](#-依赖)
-- [常见问题](#-常见问题)
+<details>
+<summary><b>📑 目录</b></summary>
+
+- [⚡ 30 秒上手](#-30-秒上手)
+- [✨ 特性](#-特性)
+- [🚀 快速开始](#-快速开始)
+- [🔧 脚本流程](#-脚本流程)
+- [📦 写入的配置文件](#-写入的配置文件)
+- [🤖 多智能体配置](#-多智能体配置)
+- [🤖 非交互模式（脚本 / CI）](#-非交互模式脚本--ci)
+- [📋 参数](#-参数)
+- [🧩 依赖](#-依赖)
+- [❓ 常见问题](#-常见问题)
 - [License](#license)
+
+</details>
 
 ## 🚀 快速开始
 
@@ -102,6 +133,8 @@ baseUrl    : https://api.example.com/v1
 omo config updated.
 ```
 
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+
 ## 🔧 脚本流程
 
 1. **检测 omo** —— 在 `PATH` 中查找 `omo`（并兜底检查 `~/.bun/bin`、`~/.local/bin`、`~/.omo/bin` 等常见目录）。
@@ -109,6 +142,8 @@ omo config updated.
    - 未安装 → 询问是否安装，确认后运行官方安装脚本 `curl -fsSL https://get.omo.dev/install.sh | bash`（Windows：`irm https://get.omo.dev/install.ps1 | iex`）；失败时回退到 `bun add -g omo-ai` / `npm i -g omo-ai`。
 2. **逐步配置** —— 依次询问 base URL、API key（隐藏输入）、模型列表、provider 名称、API 协议、默认模型，最后打印摘要并请求确认。
 3. **写入配置** —— 确认后才写盘；输入 `n` 取消且不产生任何文件。
+
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
 ## 📦 写入的配置文件
 
@@ -139,6 +174,8 @@ omo config updated.
 ```
 
 > 写入前会自动生成时间戳备份，并与已有 provider **合并**而非覆盖。
+
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
 ## 🤖 多智能体配置
 
@@ -217,6 +254,8 @@ preset 与你自己的参数可以叠加，且**你的显式指定优先**：
 
 生成的配置符合 [OmO 官方 schema](https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/omo.schema.json)，文件顶部会自动补上 `$schema` 以便编辑器提示。
 
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+
 ## 🤖 非交互模式（脚本 / CI）
 
 一次性传入参数或环境变量，脚本会跳过向导：
@@ -245,6 +284,8 @@ OMO_MODELS=gpt-4o \
 
 > 想强制运行向导，加 `-i` / `--interactive`（PowerShell：`-Interactive`）。
 
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+
 ## 📋 参数
 
 | 参数 | 环境变量 | 说明 |
@@ -272,10 +313,14 @@ OMO_MODELS=gpt-4o \
 | `--preset` / `-Preset` | — | 从官方示例起步：`claude-openai` \| `kimi-glm` \| `deepseek-alternative`，可重复 |
 | `--no-advice` / `-NoAdvice` | — | 关闭风险组合提示 |
 
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+
 ## 🧩 依赖
 
 - 配置写入需要 **Node.js >= 18** 或 **Bun**（脚本会自动选择可用的运行时）。
 - 安装 omo 需要 `curl`（推荐）、或 `bun` / `npm`。
+
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
 ## ❓ 常见问题
 
@@ -330,6 +375,8 @@ node omo-config.mjs --base-url https://api.example.com/v1 --api-key sk-xxx --mod
 默认 `~/.omo/agent`；可用环境变量 `OMO_CODING_AGENT_DIR`（旧版：`SENPI_CODING_AGENT_DIR` / `PI_CODING_AGENT_DIR`）覆盖。多智能体配置写在 `~/.omo/omo.jsonc`，可用 `OMO_OMO_JSONC` 覆盖路径。
 
 </details>
+
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
 ## License
 
