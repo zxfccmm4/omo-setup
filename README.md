@@ -9,19 +9,33 @@
 跑一条命令，剩下的交给向导 —— 检测、安装、填写 base URL / API key / 模型，全程有提示，无需背参数。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](./LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)](#-快速开始)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat-square)](#quick-start)
 [![Shell](https://img.shields.io/badge/shell-bash%20%7C%20PowerShell-4EAA25?style=flat-square)](./omo-setup.sh)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-339933?style=flat-square)](https://nodejs.org)
 [![Stars](https://img.shields.io/github/stars/zxfccmm4/omo-setup?style=flat-square)](https://github.com/zxfccmm4/omo-setup/stargazers)
 [![Issues](https://img.shields.io/github/issues/zxfccmm4/omo-setup?style=flat-square)](https://github.com/zxfccmm4/omo-setup/issues)
 
-[快速开始](#-快速开始) · [多智能体](#-多智能体配置) · [参数](#-参数) · [常见问题](#-常见问题)
+[快速上手](#quick-start) · [截图](#screenshots) · [能力](#capabilities) · [多智能体](#multi-agent) · [参数](#options) · [常见问题](#faq)
 
 </div>
 
 ---
 
-## ⚡ 30 秒上手
+<a id="screenshots"></a>
+
+## 📸 截图
+
+交互式向导会逐步提示每一个设置项，API key 隐藏输入，写盘前先给你一份摘要确认：
+
+[![omo-setup 交互式向导](./assets/setup-wizard.png)](./assets/setup-wizard.png)
+
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+
+<a id="quick-start"></a>
+
+## 🚀 快速上手
+
+### 一键运行（推荐）
 
 **macOS / Linux**
 
@@ -35,62 +49,30 @@ curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.s
 irm https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.ps1 | iex
 ```
 
-> 脚本会检测并（按需）安装 `omo`，然后逐步提示你填写 base URL、API key、模型等。下面有[完整说明](#-快速开始)。
+> [!NOTE]
+> 脚本会自动下载配套的 `omo-config.mjs`（无需手动准备），并从 `/dev/tty` 读取输入 —— 所以 `curl | bash` 也能正常交互。
 
-<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+### 三步跑通
 
-## ✨ 特性
+1. **安装并配置** —— 运行上面的一键命令，按提示填写 base URL、API key、模型列表；确认后写入配置。
+2. **验证 omo 就绪** —— 新开一个终端，确认命令可用：
 
-| 特性 | 说明 |
-| --- | --- |
-| 🧭 **交互式** | 直接运行即可，脚本逐步引导你填写 base URL、API key、模型等，无需记命令。 |
-| 🤖 **多智能体** | 可选配置 OmO 的任务分类、子代理、任务引擎、记忆与团队（写入 `~/.omo/omo.jsonc`）。 |
-| 🔍 **智能检测** | 已安装 `omo` 就跳过安装；未安装则询问后自动安装。 |
-| 🖥️ **跨平台** | Linux / macOS 用 `omo-setup.sh`，Windows 用 `omo-setup.ps1`，配置逻辑共用 `omo-config.mjs`。 |
-| 🔒 **安全写入** | 确认后才写盘，自动备份原配置，并与已有 provider **合并**而非覆盖。 |
+   ```bash
+   omo --version
+   ```
 
-<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+3. **开始使用** —— 直接进入交互会话，或一次性提问：
 
-<details>
-<summary><b>📑 目录</b></summary>
+   ```bash
+   omo
+   # 或
+   omo -p "用一句话介绍这个仓库"
+   ```
 
-- [⚡ 30 秒上手](#-30-秒上手)
-- [✨ 特性](#-特性)
-- [🚀 快速开始](#-快速开始)
-- [🔧 脚本流程](#-脚本流程)
-- [📦 写入的配置文件](#-写入的配置文件)
-- [🤖 多智能体配置](#-多智能体配置)
-- [🤖 非交互模式（脚本 / CI）](#-非交互模式脚本--ci)
-- [📋 参数](#-参数)
-- [🧩 依赖](#-依赖)
-- [❓ 常见问题](#-常见问题)
-- [License](#license)
-
-</details>
-
-## 🚀 快速开始
-
-### 远程一键运行（推荐）
-
-无需先下载，直接下载并执行脚本：
-
-**macOS / Linux**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.sh | bash
-```
-
-**Windows（PowerShell）**
-
-```powershell
-irm https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.ps1 | iex
-```
-
-> 脚本运行时会自动下载配套的 `omo-config.mjs`（无需手动准备），并在当前终端逐步提示输入。
+> [!TIP]
+> 想让脚本帮你配置多智能体（任务分类、子代理、记忆等），在向导第 8 步选「是」，见[多智能体配置](#multi-agent)。
 
 ### 本地运行
-
-先克隆仓库再执行：
 
 ```bash
 git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
@@ -102,38 +84,24 @@ git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
 .\omo-setup.ps1
 ```
 
-### 按提示逐步输入
+<p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
-每一步都显示 `[默认值]`，直接回车即采用默认：
+<a id="capabilities"></a>
 
-```
-==> step-by-step setup (press Enter to accept the [default])
+## ✨ 能力
 
-1) Endpoint base URL (e.g. https://api.example.com/v1): https://api.example.com/v1
-2) API key:                       # 输入隐藏，不回显
-3) Model ids, comma-separated (e.g. gpt-4o,gpt-4o-mini): gpt-4o,gpt-4o-mini
-4) Provider name (blank = auto from host):
-5) API protocol:  1) openai-completions (default)  2) openai-responses  3) anthropic-messages
-   choose [1-3] [1]:
-6) Default model (blank = provider/<first model>):
-
-==> about to write:
-   Base URL : https://api.example.com/v1
-   API key  : sk-a...-4f2c
-   Models   : gpt-4o,gpt-4o-mini
-   Provider : (auto)
-   Protocol : openai-completions
-   Default  : (provider/<first model>)
-
-7) Write this config? [n]: y
-==> writing config
-provider   : example-com
-baseUrl    : https://api.example.com/v1
-...
-omo config updated.
-```
+| 能力 | 说明 |
+| --- | --- |
+| 🧭 **交互式向导** | 逐步引导填写 base URL、API key（隐藏输入）、模型、provider、协议、默认模型，写盘前先确认。 |
+| 🔍 **智能检测** | 已安装 `omo` 就跳过安装；未安装则询问后自动安装。 |
+| 🖥️ **跨平台** | Linux / macOS 用 `omo-setup.sh`，Windows 用 `omo-setup.ps1`，配置逻辑共用 `omo-config.mjs`。 |
+| 🤖 **多智能体** | 可选配置 OmO 的任务分类、子代理、任务引擎、记忆与团队（写入 `~/.omo/omo.jsonc`）。 |
+| 🧠 **官方建议** | 内置官方模型-角色匹配摘要（`--advice`）与三个官方示例预设（`--preset`），并提示风险组合。 |
+| 🔒 **安全写入** | 确认后才写盘，自动备份原配置，并与已有 provider **合并**而非覆盖。 |
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+
+<a id="how-it-works"></a>
 
 ## 🔧 脚本流程
 
@@ -145,9 +113,17 @@ omo config updated.
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
+<a id="files"></a>
+
 ## 📦 写入的配置文件
 
 默认目录 `~/.omo/agent`（可用 `OMO_CODING_AGENT_DIR` 覆盖）。
+
+| 文件 | 作用 |
+| --- | --- |
+| `~/.omo/agent/models.json` | 新增/更新 `providers.<名称>`（`baseUrl` / `api` / `apiKey` / `models`）。 |
+| `~/.omo/agent/settings.json` | 设置 `defaultProvider` / `defaultModel`。 |
+| `~/.omo/omo.jsonc` | 多智能体配置（分类 / 代理 / 任务 / 团队 / 记忆），仅在使用多智能体参数时写入。 |
 
 `models.json` —— 新增/更新 `providers.<名称>`：
 
@@ -173,9 +149,12 @@ omo config updated.
 }
 ```
 
-> 写入前会自动生成时间戳备份，并与已有 provider **合并**而非覆盖。
+> [!IMPORTANT]
+> 写入前会自动生成时间戳备份（`<文件>.bak.<时间戳>`），并与已有配置**合并**而非覆盖。
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+
+<a id="multi-agent"></a>
 
 ## 🤖 多智能体配置
 
@@ -194,7 +173,9 @@ omo config updated.
 - **主代理推荐梯队**（按优先级）：Claude Opus 5.5 → Claude Fable 5.1 → Kimi K3 → GPT-6 Astra → GPT-6.1 Sol → GPT-6 Sol → GLM 5.3。梯队外的模型官方不保证。
 - **模型家族要对得上角色**：Claude 系 → 主代理与 `plan-consultant`；GPT 系 → `plan-reviewer`、`ultrabrain`、`deep-low`、`deep-high`；小而快的模型 → `explore`、`librarian`、`quick`。
 - **别把贵模型放错位置**：`explore`/`librarian` 用 Opus/Fable 是巨大的浪费；`plan-reviewer` 用小模型会沦为橡皮图章。
-- 配置时脚本会自动检查这些**风险组合**并打印 `advice:` 提示（用 `--no-advice` 关闭）。
+
+> [!WARNING]
+> 配置时脚本会自动检查上述**风险组合**并打印 `advice:` 提示；确认无误可加 `--no-advice` 关闭。
 
 ### 从官方示例起步（presets）
 
@@ -214,7 +195,22 @@ preset 与你自己的参数可以叠加，且**你的显式指定优先**：
 
 向导第 8 步的第一步（`0)`）也会询问是否选用某个 preset。
 
-只写了多智能体参数、没写 provider 参数时，脚本会跳过 provider 向导，只更新 `omo.jsonc`。
+> [!NOTE]
+> 只写了多智能体参数、没写 provider 参数时，脚本会跳过 provider 向导，只更新 `omo.jsonc`。
+
+### 常用参数速查
+
+| 目标 | 命令 |
+| --- | --- |
+| 任务分类 | `--category architect=anthropic/claude-opus-5-5:max` |
+| 子代理 | `--agent explore=deepseek-flash:high` |
+| 任务引擎 | `--task default_concurrency=4 --task max_depth=2` |
+| 记忆开关 | `--memory on`（或 `off`） |
+| 定义团队 | `--team 'reviewers={"leadAgentId":"lead","members":[...]}'` |
+| 任意字段 | `--set-json '{"git_master":{"commit_footer":true}}'` 或 `--omo-json ./my-omo.jsonc` |
+
+<details>
+<summary><b>展开：完整命令示例</b></summary>
 
 **任务分类（categories）** —— 给某一类任务指定模型与推理档位：
 
@@ -250,13 +246,17 @@ preset 与你自己的参数可以叠加，且**你的显式指定优先**：
 ./omo-setup.sh --omo-json ./my-omo.jsonc
 ```
 
+</details>
+
 写入时会读取现有 `omo.jsonc`（支持 `//` 注释与尾逗号）并**深度合并**：同名对象递归合并，数组/标量整体替换；写入前自动备份为 `omo.jsonc.bak.<时间戳>`。若只想配 provider，加 `--no-agent-config` 即可完全不碰 `omo.jsonc`。
 
 生成的配置符合 [OmO 官方 schema](https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/omo.schema.json)，文件顶部会自动补上 `$schema` 以便编辑器提示。
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
-## 🤖 非交互模式（脚本 / CI）
+<a id="non-interactive"></a>
+
+## 🖥️ 非交互模式（脚本 / CI）
 
 一次性传入参数或环境变量，脚本会跳过向导：
 
@@ -282,9 +282,12 @@ OMO_MODELS=gpt-4o \
 .\omo-setup.ps1 -BaseUrl https://api.example.com/v1 -ApiKey sk-xxx -Models gpt-4o,gpt-4o-mini
 ```
 
+> [!TIP]
 > 想强制运行向导，加 `-i` / `--interactive`（PowerShell：`-Interactive`）。
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+
+<a id="options"></a>
 
 ## 📋 参数
 
@@ -315,12 +318,16 @@ OMO_MODELS=gpt-4o \
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
+<a id="requirements"></a>
+
 ## 🧩 依赖
 
 - 配置写入需要 **Node.js >= 18** 或 **Bun**（脚本会自动选择可用的运行时）。
 - 安装 omo 需要 `curl`（推荐）、或 `bun` / `npm`。
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
+
+<a id="faq"></a>
 
 ## ❓ 常见问题
 
@@ -378,6 +385,18 @@ node omo-config.mjs --base-url https://api.example.com/v1 --api-key sk-xxx --mod
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
-## License
+## 📜 License
 
 [MIT](./LICENSE)
+
+---
+
+<div align="center">
+
+### ⭐ Star 趋势
+
+[![Star History Chart](https://api.star-history.com/svg?repos=zxfccmm4/omo-setup&type=Date)](https://star-history.com/#zxfccmm4/omo-setup&Date)
+
+<sub>如果这个脚本帮到了你，欢迎点个 Star ⭐</sub>
+
+</div>

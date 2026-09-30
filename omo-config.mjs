@@ -654,11 +654,25 @@ function buildAgentPatch(args) {
 
 function summarizeAgentPatch(patch) {
   const lines = [];
+  // A pin may be a single `model` or a `models` chain; show whichever is set.
+  const describe = (cfg) => {
+    if (typeof cfg.model === "string") {
+      return cfg.model + (cfg.reasoning ? `:${cfg.reasoning}` : "");
+    }
+    if (Array.isArray(cfg.models) && cfg.models.length) {
+      const first = cfg.models[0];
+      const head = typeof first === "string"
+        ? first
+        : `${first.model}${first.reasoning ? `:${first.reasoning}` : ""}`;
+      return cfg.models.length > 1 ? `${head} (+${cfg.models.length - 1})` : head;
+    }
+    return "(unset)";
+  };
   for (const [name, cfg] of Object.entries(patch.categories || {})) {
-    lines.push(`category   : ${name} = ${cfg.model}${cfg.reasoning ? `:${cfg.reasoning}` : ""}`);
+    lines.push(`category   : ${name} = ${describe(cfg)}`);
   }
   for (const [name, cfg] of Object.entries(patch.agents || {})) {
-    lines.push(`agent      : ${name} = ${cfg.model}${cfg.reasoning ? `:${cfg.reasoning}` : ""}`);
+    lines.push(`agent      : ${name} = ${describe(cfg)}`);
   }
   for (const [key, value] of Object.entries(patch.task || {})) {
     lines.push(`task       : ${key} = ${JSON.stringify(value)}`);
