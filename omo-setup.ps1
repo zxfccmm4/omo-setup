@@ -29,6 +29,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$RawBase = 'https://raw.githubusercontent.com/zxfccmm4/omo-setup/main'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Info($m) { Write-Host "==> $m" -ForegroundColor Cyan }
@@ -154,8 +155,22 @@ if ($DefaultModel) { $configArgs += @('--default-model', $DefaultModel) }
 if ($NoDefault)    { $configArgs += '--no-default' }
 if ($DryRun)       { $configArgs += '--dry-run' }
 
-$configScript = Join-Path $ScriptDir 'omo-config.mjs'
-if (-not (Test-Path $configScript)) { Die "missing $configScript" }
+function Get-ConfigScript {
+  if ($ScriptDir) {
+    $local = Join-Path $ScriptDir 'omo-config.mjs'
+    if (Test-Path $local) { return $local }
+  }
+  $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("omo-config-{0}.mjs" -f ([Guid]::NewGuid().ToString('N')))
+  Info 'downloading omo-config.mjs'
+  try {
+    Invoke-RestMethod -Uri "$RawBase/omo-config.mjs" -OutFile $tmp
+  } catch {
+    Die "failed to download omo-config.mjs: $($_.Exception.Message)"
+  }
+  return $tmp
+}
+
+$configScript = Get-ConfigScript
 
 Info 'writing config'
 if (Get-Command node -ErrorAction SilentlyContinue) { & node $configScript @configArgs }

@@ -4,8 +4,10 @@
 #
 # Targets Linux and macOS. For Windows use omo-setup.ps1.
 #
-# Run with no arguments for an interactive wizard, or pass flags for CI/scripted use.
+# Remote one-liner (downloads and runs):
+#   curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.sh | bash
 #
+# Local use:
 #   ./omo-setup.sh                     # interactive wizard
 #   ./omo-setup.sh -i                  # force the wizard
 #   ./omo-setup.sh --base-url URL --api-key KEY --models a,b   # non-interactive
@@ -25,7 +27,9 @@
 #
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+RAW_BASE="https://raw.githubusercontent.com/zxfccmm4/omo-setup/main"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "$PWD")"
 
 BASE_URL="${OMO_BASE_URL:-}"
 API_KEY="${OMO_API_KEY:-}"
@@ -37,14 +41,25 @@ NO_DEFAULT=0
 DRY_RUN=0
 SKIP_INSTALL=0
 FORCE_INTERACTIVE=0
+CONFIG_SCRIPT=""
+TMP_CONFIG=""
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
+cleanup() { [ -n "$TMP_CONFIG" ] && [ -f "$TMP_CONFIG" ] && rm -f "$TMP_CONFIG"; }
+trap cleanup EXIT
+
 mask() {
   local s="$1" n=${#1}
   if [ "$n" -le 8 ]; then printf '********'; else printf '%s...%s' "${s:0:4}" "${s: -4}"; fi
+}
+
+have_tty() { { : </dev/tty; } 2>/dev/null; }
+
+read_tty() {
+  if have_tty; then IFS= read -r "$@" < /dev/tty; else IFS= read -r "$@"; fi
 }
 
 while [ $# -gt 0 ]; do
@@ -53,7 +68,7 @@ while [ $# -gt 0 ]; do
     --skip-install) SKIP_INSTALL=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --no-default) NO_DEFAULT=1; shift ;;
-    -h|--help) sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]:-$0}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     --base-url) BASE_URL="$2"; shift 2 ;;
     --api-key) API_KEY="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
@@ -73,14 +88,14 @@ done
 ask() {
   local msg="$1" def="${2-}" val
   if [ -n "$def" ]; then printf '%s [%s]: ' "$msg" "$def" >&2; else printf '%s: ' "$msg" >&2; fi
-  IFS= read -r val || true
+  read_tty val || true
   printf '%s' "${val:-$def}"
 }
 
 ask_secret() {
   local msg="$1" val
   printf '%s: ' "$msg" >&2
-  IFS= read -rs val || true
+  if have_tty; then IFS= read -rs val < /dev/tty || true; else IFS= read -rs val || true; fi
   printf '\n' >&2
   printf '%s' "$val"
 }
@@ -88,7 +103,7 @@ ask_secret() {
 ask_yes() {
   local msg="$1" def="${2:-n}" val
   printf '%s [%s]: ' "$msg" "$def" >&2
-  IFS= read -r val || true
+  read_tty val || true
   val="${val:-$def}"
   case "$val" in y|Y|yes|YES|Yes) return 0 ;; *) return 1 ;; esac
 }
@@ -114,11 +129,29 @@ install_omo() {
   fi
 }
 
+ensure_config_script() {
+  local local_path="$SCRIPT_DIR/omo-config.mjs"
+  if [ -f "$local_path" ]; then CONFIG_SCRIPT="$local_path"; return; fi
+  local tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/omo-config.XXXXXX.mjs")"
+  info "downloading omo-config.mjs" >&2
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$RAW_BASE/omo-config.mjs" -o "$tmp" || die "failed to download omo-config.mjs"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$tmp" "$RAW_BASE/omo-config.mjs" || die "failed to download omo-config.mjs"
+  else
+    die "need curl or wget to download omo-config.mjs"
+  fi
+  TMP_CONFIG="$tmp"
+  CONFIG_SCRIPT="$tmp"
+}
+
 run_config() {
+  ensure_config_script
   if command -v node >/dev/null 2>&1; then
-    node "$SCRIPT_DIR/omo-config.mjs" "$@"
+    node "$CONFIG_SCRIPT" "$@"
   elif command -v bun >/dev/null 2>&1; then
-    bun "$SCRIPT_DIR/omo-config.mjs" "$@"
+    bun "$CONFIG_SCRIPT" "$@"
   else
     die "need node or bun to write omo config"
   fi
@@ -175,7 +208,7 @@ if [ "$SKIP_INSTALL" -eq 0 ]; then
   if OMO_BIN="$(find_omo)"; then
     info "omo already installed: $("$OMO_BIN" --version 2>/dev/null || echo "$OMO_BIN") - skipping installation"
   else
-    if [ -t 0 ]; then
+    if have_tty; then
       if ask_yes "omo is not installed. Install it now?" "y"; then
         install_omo
       else
