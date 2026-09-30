@@ -23,19 +23,41 @@
 
 ## 快速开始
 
-### macOS / Linux
+### 远程一键运行（推荐）
+
+无需先下载，直接下载并执行脚本：
+
+**macOS / Linux**
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.sh | bash
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.ps1 | iex
+```
+
+脚本运行时会自动下载配套的 `omo-config.mjs`（无需手动准备），并在当前终端逐步提示输入。
+
+### 本地运行
+
+先克隆仓库再执行：
+
+```bash
+git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
 ./omo-setup.sh
 ```
 
-### Windows (PowerShell)
-
 ```powershell
+git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
 .\omo-setup.ps1
 ```
 
-运行后按提示逐步输入即可，每一步都显示 `[默认值]`，直接回车即采用默认：
+### 按提示逐步输入
+
+每一步都显示 `[默认值]`，直接回车即采用默认：
 
 ```
 ==> step-by-step setup (press Enter to accept the [default])
@@ -107,7 +129,8 @@ omo config updated.
 一次性传入参数或环境变量，脚本会跳过向导：
 
 ```bash
-./omo-setup.sh --base-url https://api.example.com/v1 --api-key sk-xxx --models gpt-4o,gpt-4o-mini
+curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.sh | bash -s -- \
+  --base-url https://api.example.com/v1 --api-key sk-xxx --models gpt-4o,gpt-4o-mini
 ```
 
 ```bash
@@ -144,6 +167,9 @@ OMO_MODELS=gpt-4o \
 - 安装 omo 需要 `curl`（推荐）、或 `bun` / `npm`。
 
 ## 常见问题
+
+**远程执行时 API key 输入会卡住？**
+向导从 `/dev/tty` 读取输入，因此 `curl | bash` 也能正常交互。若在无终端的 CI 环境运行，请改用非交互模式传入 `--base-url/--api-key/--models`。
 
 **`omo` 装好了但提示找不到？**
 新开的终端才能刷新 `PATH`。也可以手动执行 `export PATH="$HOME/.bun/bin:$PATH"`（或重启终端）后重试。
