@@ -164,6 +164,62 @@ find_omo() {
   return 1
 }
 
+ensure_runtime() {
+  if command -v node >/dev/null 2>&1; then
+    export PATH="$(dirname "$(command -v node)"):$PATH"
+    return 0
+  fi
+  if command -v bun >/dev/null 2>&1; then
+    export PATH="$HOME/.bun/bin:$PATH"
+    return 0
+  fi
+
+  info "node.js / bun not found; installing a JavaScript runtime automatically"
+
+  case "$(uname -s)" in
+    Darwin)
+      if command -v brew >/dev/null 2>&1; then
+        brew install node || die "failed to install node.js via Homebrew"
+        export PATH="$(dirname "$(command -v node)"):$PATH"
+        return 0
+      fi
+      ;;
+    Linux)
+      if command -v apt-get >/dev/null 2>&1; then
+        local sudo_cmd=""
+        if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+          sudo_cmd="sudo"
+        fi
+        $sudo_cmd apt-get update
+        $sudo_cmd apt-get install -y ca-certificates curl gnupg
+        if [ ! -f /etc/apt/keyrings/nodesource.gpg ] || [ ! -f /etc/apt/sources.list.d/nodesource.list ]; then
+          mkdir -p /etc/apt/keyrings
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | $sudo_cmd tee /etc/apt/sources.list.d/nodesource.list >/dev/null
+        fi
+        $sudo_cmd apt-get update
+        $sudo_cmd apt-get install -y nodejs
+        if command -v node >/dev/null 2>&1; then
+          export PATH="$(dirname "$(command -v node)"):$PATH"
+          return 0
+        fi
+      fi
+      ;;
+  esac
+
+  if command -v curl >/dev/null 2>&1; then
+    info "falling back to a Bun install"
+    export BUN_INSTALL="$HOME/.bun"
+    curl -fsSL https://bun.sh/install | bash || die "failed to install Bun"
+    export PATH="$HOME/.bun/bin:$PATH"
+    if command -v bun >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  die "could not install node.js or bun automatically on this platform"
+}
+
 install_omo() {
   info "installing OmO Native"
   if [ "$(id -u)" -eq 0 ] && [ "${OMO_INSTALL_ALLOW_SUDO:-}" != "1" ]; then
@@ -210,6 +266,7 @@ ensure_config_script() {
 }
 
 run_config() {
+  ensure_runtime
   ensure_config_script
   if command -v node >/dev/null 2>&1; then
     node "$CONFIG_SCRIPT" "$@"
@@ -273,6 +330,7 @@ wizard() {
 }
 
 show_advice() {
+  ensure_runtime
   ensure_config_script
   if command -v node >/dev/null 2>&1; then
     node "$CONFIG_SCRIPT" --advice
