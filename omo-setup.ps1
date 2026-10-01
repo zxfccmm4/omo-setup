@@ -77,6 +77,72 @@ function Ask-Yes($msg, $default) {
   return ($v -match '^(y|yes)$')
 }
 
+function Ensure-Runtime {
+  if (Get-Command node -ErrorAction SilentlyContinue) { return }
+  if (Get-Command bun -ErrorAction SilentlyContinue) { return }
+
+  Info 'node.js / bun not found; installing a JavaScript runtime automatically'
+
+  if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      winget install --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements
+    }
+    elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+      choco install nodejs-lts -y
+    }
+    elseif (Get-Command scoop -ErrorAction SilentlyContinue) {
+      scoop install nodejs-lts
+    }
+    else {
+      Warn 'No supported package manager found for Node.js on Windows; trying Bun as fallback'
+    }
+  }
+  elseif ($IsMacOS) {
+    if (Get-Command brew -ErrorAction SilentlyContinue) {
+      brew install node
+    }
+  }
+  elseif (Get-Command apt-get -ErrorAction SilentlyContinue) {
+    $sudo = $null
+    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -and -not ($IsWindows)) {
+      if (Get-Command sudo -ErrorAction SilentlyContinue) { $sudo = 'sudo' }
+    }
+
+    if ($sudo) { & $sudo apt-get update }
+    else { apt-get update }
+
+    if ($sudo) { & $sudo apt-get install -y ca-certificates curl gnupg }
+    else { apt-get install -y ca-certificates curl gnupg }
+
+    $keyring = '/etc/apt/keyrings/nodesource.gpg'
+    $list = '/etc/apt/sources.list.d/nodesource.list'
+    if (-not (Test-Path $keyring) -or -not (Test-Path $list)) {
+      New-Item -ItemType Directory -Force -Path '/etc/apt/keyrings' | Out-Null
+      $repoKey = (Invoke-WebRequest -Uri 'https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key' -UseBasicParsing).Content | Set-Content -Path $keyring -Encoding Byte
+      @('deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main') | Set-Content -Path $list
+    }
+
+    if ($sudo) { & $sudo apt-get update; & $sudo apt-get install -y nodejs }
+    else { apt-get update; apt-get install -y nodejs }
+  }
+
+  if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    if (Get-Command curl -ErrorAction SilentlyContinue) {
+      Info 'Falling back to Bun install'
+      & curl -fsSL https://bun.sh/install.ps1 | powershell -c -
+      if (Get-Command bun -ErrorAction SilentlyContinue) { return }
+    }
+
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+      winget install --id Oven-sh.Bun --accept-source-agreements --accept-package-agreements
+    }
+  }
+
+  if (-not (Get-Command node -ErrorAction SilentlyContinue) -and -not (Get-Command bun -ErrorAction SilentlyContinue)) {
+    Die 'could not install node.js or bun automatically on this platform'
+  }
+}
+
 function Find-Omo {
   $cmd = Get-Command omo -ErrorAction SilentlyContinue
   if ($cmd) { return $cmd.Source }
@@ -244,12 +310,14 @@ function Get-ConfigScript {
 $configScript = Get-ConfigScript
 
 if ($Advice) {
+  Ensure-Runtime
   if (Get-Command node -ErrorAction SilentlyContinue) { & node $configScript --advice }
   elseif (Get-Command bun -ErrorAction SilentlyContinue) { & bun $configScript --advice }
   else { Die 'need node or bun to show recommendations' }
   exit $LASTEXITCODE
 }
 
+Ensure-Runtime
 Info 'writing config'
 if (Get-Command node -ErrorAction SilentlyContinue) { & node $configScript @configArgs }
 elseif (Get-Command bun -ErrorAction SilentlyContinue) { & bun $configScript @configArgs }
