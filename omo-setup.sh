@@ -62,6 +62,7 @@ SKIP_INSTALL=0
 FORCE_INTERACTIVE=0
 CONFIG_SCRIPT=""
 TMP_CONFIG=""
+TMP_CONFIG_DIR=""
 TMP_MODELS=""
 TMP_MODELS_ERR=""
 FETCH_ERROR=""
@@ -91,6 +92,7 @@ die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
 cleanup() {
   if [ -n "$TMP_CONFIG" ] && [ -f "$TMP_CONFIG" ]; then rm -f "$TMP_CONFIG"; fi
+  if [ -n "$TMP_CONFIG_DIR" ] && [ -d "$TMP_CONFIG_DIR" ]; then rm -rf "$TMP_CONFIG_DIR"; fi
   if [ -n "$TMP_MODELS" ] && [ -f "$TMP_MODELS" ]; then rm -f "$TMP_MODELS"; fi
   if [ -n "$TMP_MODELS_ERR" ] && [ -f "$TMP_MODELS_ERR" ]; then rm -f "$TMP_MODELS_ERR"; fi
   return 0
@@ -236,40 +238,41 @@ fetch_models() {
   [ ${#MODEL_IDS[@]} -gt 0 ]
 }
 
-print_model_choices() {
-  local filter="$1" shown=0 i hay
+VIEW_IDS=()
+VIEW_NAMES=()
+
+# Fill VIEW_IDS / VIEW_NAMES with the models matching $1 (case-insensitive).
+build_view() {
+  local filter i hay
+  filter="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  VIEW_IDS=()
+  VIEW_NAMES=()
   for ((i = 0; i < ${#MODEL_IDS[@]}; i++)); do
-    hay="${MODEL_IDS[$i]} ${MODEL_NAMES[$i]}"
+    hay="$(printf '%s %s' "${MODEL_IDS[$i]}" "${MODEL_NAMES[$i]}" | tr '[:upper:]' '[:lower:]')"
     if [ -n "$filter" ]; then
       case "$hay" in *"$filter"*) : ;; *) continue ;; esac
     fi
-    shown=$((shown + 1))
-    if [ "$shown" -le 60 ]; then
-      printf '   %d) %s\t%s\n' "$((i + 1))" "${MODEL_IDS[$i]}" "${MODEL_NAMES[$i]}" >&2
+    VIEW_IDS+=("${MODEL_IDS[$i]}")
+    VIEW_NAMES+=("${MODEL_NAMES[$i]}")
+  done
+  [ ${#VIEW_IDS[@]} -gt 0 ]
+}
+
+# Print at most $1 entries of the current view, numbered by view position.
+print_view() {
+  local max="${1:-15}" i total=${#VIEW_IDS[@]}
+  for ((i = 0; i < total; i++)); do
+    if [ "$((i + 1))" -le "$max" ]; then
+      printf '   %d) %s\t%s\n' "$((i + 1))" "${VIEW_IDS[$i]}" "${VIEW_NAMES[$i]}" >&2
     fi
   done
-  if [ "$shown" -gt 60 ]; then
-    printf '   ... %s\n' "$(lc "$((shown - 60)) more, type a filter to narrow" "还有 $((shown - 60)) 个，可输入过滤词缩小范围")" >&2
+  if [ "$total" -gt "$max" ]; then
+    printf '   ... %s\n' "$(lc "$((total - max)) more - type text to filter, or r for the full list" "还有 $((total - max)) 个 - 输入文字过滤，或输入 r 显示全部")" >&2
   fi
-  printf '%s\n' "$(lc "   ($shown shown)" "   （共显示 $shown 个）")" >&2
+  printf '%s\n' "$(lc "   ($total shown)" "   （共 $total 个）")" >&2
 }
 
-collect_shown() {
-  local filter="$1" i hay
-  SELECTED_IDS=()
-  SELECTED_NAMES=()
-  for ((i = 0; i < ${#MODEL_IDS[@]}; i++)); do
-    hay="${MODEL_IDS[$i]} ${MODEL_NAMES[$i]}"
-    if [ -n "$filter" ]; then
-      case "$hay" in *"$filter"*) : ;; *) continue ;; esac
-    fi
-    SELECTED_IDS+=("${MODEL_IDS[$i]}")
-    SELECTED_NAMES+=("${MODEL_NAMES[$i]}")
-  done
-  [ ${#SELECTED_IDS[@]} -gt 0 ]
-}
-
-# "1,3 5-7" -> SELECTED_IDS / SELECTED_NAMES by 1-based index.
+# "1,3 5-7" -> SELECTED_IDS / SELECTED_NAMES by 1-based view index.
 parse_selection() {
   local input="$1" token a b i
   input="${input//,/ }"
@@ -282,31 +285,40 @@ parse_selection() {
     esac
     case "$a" in ''|*[!0-9]*) return 1 ;; esac
     case "$b" in ''|*[!0-9]*) return 1 ;; esac
-    if [ "$a" -lt 1 ] || [ "$b" -gt ${#MODEL_IDS[@]} ] || [ "$a" -gt "$b" ]; then return 1; fi
+    if [ "$a" -lt 1 ] || [ "$b" -gt ${#VIEW_IDS[@]} ] || [ "$a" -gt "$b" ]; then return 1; fi
     for ((i = a; i <= b; i++)); do
-      SELECTED_IDS+=("${MODEL_IDS[$((i - 1))]}")
-      SELECTED_NAMES+=("${MODEL_NAMES[$((i - 1))]}")
+      SELECTED_IDS+=("${VIEW_IDS[$((i - 1))]}")
+      SELECTED_NAMES+=("${VIEW_NAMES[$((i - 1))]}")
     done
   done
   [ ${#SELECTED_IDS[@]} -gt 0 ]
 }
 
-# Interactive picker: fills SELECTED_IDS / SELECTED_NAMES.
+collect_view() {
+  SELECTED_IDS=("${VIEW_IDS[@]}")
+  SELECTED_NAMES=("${VIEW_NAMES[@]}")
+  [ ${#SELECTED_IDS[@]} -gt 0 ]
+}
+
+# Multi-select picker: fills SELECTED_IDS / SELECTED_NAMES.
 pick_models() {
   local input filter="" sel
   [ ${#MODEL_IDS[@]} -gt 0 ] || return 1
   while :; do
+    if ! build_view "$filter"; then
+      warn "$(lc 'nothing matched that filter' '没有匹配的模型')"
+      filter=""
+      continue
+    fi
     printf '\n%s\n' "$(lc "models from $BASE_URL:" "来自 $BASE_URL 的模型：")" >&2
-    print_model_choices "$filter"
-    input="$(ask "$(lc 'select: all / 1,3 / 2-4 / a text filter (blank = all)' '请选择：all / 1,3 / 2-4 / 过滤词（留空=全部）')" '')"
+    print_view 60
+    input="$(ask "$(lc 'select: all / 1,3 / 2-4 / text filter (blank = all)' '请选择：all / 1,3 / 2-4 / 过滤词（留空=全部）')" '')"
     sel="${input//[0-9]/}"
     sel="${sel// /}"
     sel="${sel//,/}"
     sel="${sel//-/}"
     if [ -z "$input" ] || [ "$input" = all ] || [ "$input" = ALL ]; then
-      if collect_shown "$filter"; then return 0; fi
-      warn "$(lc 'nothing matched that filter' '没有匹配的模型')"
-      filter=""
+      if collect_view; then return 0; fi
     elif [ -z "$sel" ]; then
       if parse_selection "$input"; then return 0; fi
       warn "$(lc "invalid selection '$input'" "无效的选择 '$input'")"
@@ -316,18 +328,33 @@ pick_models() {
   done
 }
 
-# Ask for one model id, returned as "provider/model" (empty = skipped).
+# Single-model picker: number to pick, text to filter, r for the full list.
+# Prints "provider/model" on success; returns 1 when skipped.
 pick_one_model() {
-  local input
+  local input filter="" max=15
   [ ${#MODEL_IDS[@]} -gt 0 ] || return 1
-  printf '\n%s\n' "$(lc 'pick a model:' '选择模型：')" >&2
-  print_model_choices ""
-  input="$(ask "$(lc 'model number (blank = skip)' '模型编号（留空=跳过）')" '')"
-  case "$input" in ''|*[!0-9]*) return 1 ;; esac
-  if [ "$input" -lt 1 ] || [ "$input" -gt ${#MODEL_IDS[@]} ]; then return 1; fi
-  local prov
-  prov="$(provider_name)" || return 1
-  printf '%s/%s' "$prov" "${MODEL_IDS[$((input - 1))]}"
+  while :; do
+    if ! build_view "$filter"; then
+      warn "$(lc 'nothing matched that filter' '没有匹配的模型')"
+      filter=""
+      continue
+    fi
+    printf '\n%s\n' "$(lc 'pick a model:' '选择模型：')" >&2
+    print_view "$max"
+    input="$(ask "$(lc 'number / text to filter / r = all / blank = skip' '编号 / 文字过滤 / r 全部 / 留空跳过')" '')"
+    case "$input" in
+      '') return 1 ;;
+      r|R|all|ALL) max=200; continue ;;
+      *[!0-9]*) filter="$input"; continue ;;
+    esac
+    if [ "$input" -ge 1 ] && [ "$input" -le ${#VIEW_IDS[@]} ]; then
+      local prov
+      prov="$(provider_name)" || return 1
+      printf '%s/%s' "$prov" "${VIEW_IDS[$((input - 1))]}"
+      return 0
+    fi
+    warn "$(lc "invalid number '$input'" "无效编号 '$input'")"
+  done
 }
 
 ask_reasoning() {
@@ -431,8 +458,13 @@ install_omo() {
 ensure_config_script() {
   local local_path="$SCRIPT_DIR/omo-config.mjs"
   if [ -f "$local_path" ]; then CONFIG_SCRIPT="$local_path"; return; fi
-  local tmp
-  tmp="$(mktemp "${TMPDIR:-/tmp}/omo-config.XXXXXX.mjs")"
+  # BSD mktemp (macOS) only substitutes X's at the END of a template, so
+  # "omo-config.XXXXXX.mjs" would become a literal filename that collides on
+  # the second run. Create a temp directory instead and put the helper inside
+  # it with the .mjs extension node needs for ESM.
+  local tmpdir tmp
+  tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/omo-config.XXXXXX")" || die "cannot create a temp directory under ${TMPDIR:-/tmp}"
+  tmp="$tmpdir/omo-config.mjs"
   info "downloading omo-config.mjs" >&2
   # raw.githubusercontent.com is the canonical source; jsDelivr mirrors the
   # same repo and stays reachable where raw is blocked (e.g. CN-region VMs).
@@ -450,8 +482,10 @@ ensure_config_script() {
     ok=0
   done
   if [ "$ok" -ne 1 ] || [ ! -s "$tmp" ]; then
+    rm -rf "$tmpdir"
     die "failed to download omo-config.mjs (tried raw.githubusercontent.com and cdn.jsdelivr.net)"
   fi
+  TMP_CONFIG_DIR="$tmpdir"
   TMP_CONFIG="$tmp"
   CONFIG_SCRIPT="$tmp"
 }
@@ -522,7 +556,7 @@ wizard() {
   info "$(lc 'about to write:' '即将写入：')"
   printf '   %s : %s\n' "$(lc 'Base URL' 'Base URL')" "$BASE_URL" >&2
   printf '   %s : %s\n' "$(lc 'API key ' 'API key ')" "$(mask "$API_KEY")" >&2
-  printf '   %s : %s\n' "$(lc 'Models  ' '模型    ')" "${MODELS:-$(lc '(from file)' '（来自文件）')}" >&2
+  printf '   %s : %s\n' "$(lc 'Models  ' '模型    ')" "$(summarize_ids ${MODELS//,/ })" >&2
   printf '   %s : %s\n' "$(lc 'Provider' 'Provider')" "${PROVIDER:-(auto)}" >&2
   printf '   %s : %s\n' "$(lc 'Protocol' '协议    ')" "$API_TYPE" >&2
   if [ "$NO_DEFAULT" -eq 0 ]; then
@@ -549,6 +583,51 @@ show_advice() {
   fi
 }
 
+# Comma-joined list of the first 6 entries plus a "+K more" tail, so a long
+# selection does not flood the summary. Call as: summarize_ids "${ids[@]}"
+summarize_ids() {
+  local max=6 joined="" i total=$#
+  local -a ids=("$@")
+  for ((i = 0; i < total; i++)); do
+    if [ "$((i + 1))" -le "$max" ]; then
+      if [ -n "$joined" ]; then joined="$joined,${ids[$i]}"; else joined="${ids[$i]}"; fi
+    fi
+  done
+  if [ "$total" -gt "$max" ]; then
+    joined="$joined,$(lc "+$((total - max)) more" "等共 $total 个")"
+  fi
+  printf '%s' "$joined"
+}
+
+# Menu of the well-known built-in names; 0 = type it by hand.
+CATEGORY_NAMES="architect artistry quick deep-low deep-high ultrabrain unspecified-low unspecified-high visual-engineering writing"
+AGENT_NAMES="explore librarian plan-consultant plan-reviewer"
+
+pick_name() {
+  local kind="$1" names i input
+  if [ "$kind" = category ]; then names="$CATEGORY_NAMES"; else names="$AGENT_NAMES"; fi
+  printf '%s\n' "$(lc '   built-in names:' '   内置名称：')" >&2
+  i=0
+  for n in $names; do
+    i=$((i + 1))
+    printf '     %d) %s\n' "$i" "$n" >&2
+  done
+  printf '     %s\n' "$(lc '0) type a custom name' '0) 手动输入名称')" >&2
+  input="$(ask "$(lc '   choose [0-N]' '   请选择 [0-N]')" '0')"
+  case "$input" in
+    ''|0) printf '%s' "$(ask "$(lc '   name' '   名称')" '')" ;;
+    *[!0-9]*) printf '%s' "$input" ;;
+    *)
+      i=0
+      for n in $names; do
+        i=$((i + 1))
+        if [ "$i" -eq "$input" ]; then printf '%s' "$n"; return 0; fi
+      done
+      printf '%s' "$(ask "$(lc '   name' '   名称')" '')"
+      ;;
+  esac
+}
+
 agent_wizard() {
   local v spec level
   printf '\n' >&2
@@ -573,7 +652,9 @@ agent_wizard() {
   fi
 
   printf '%s\n' "$(lc 'a) Pin a task category (blank = skip)' 'a) 固定任务分类的模型（留空=跳过）')" >&2
-  v="$(ask "$(lc '   category name (e.g. quick, ultrabrain)' '   分类名称（例：quick、ultrabrain）')" '')"
+  v="$(ask "$(lc '   add a category? [y/N]' '   要固定分类吗？[y/N]')" 'n')"
+  case "$v" in y|Y|yes|YES) : ;; *) v="" ;; esac
+  if [ -n "$v" ]; then v="$(pick_name category)"; fi
   while [ -n "$v" ]; do
     if [ ${#MODEL_IDS[@]} -gt 0 ]; then
       spec="$(pick_one_model)" || spec=""
@@ -585,11 +666,14 @@ agent_wizard() {
       spec="$(ask "$(lc '   model as provider/model[:level]' '   模型，格式 provider/model[:档位]')" '')"
     fi
     if [ -n "$spec" ]; then CATEGORIES+=("$v=$spec"); fi
-    v="$(ask "$(lc '   another category (blank = done)' '   另一个分类（留空=完成）')" '')"
+    v="$(ask "$(lc '   another category? [y/N]' '   还要固定其他分类吗？[y/N]')" 'n')"
+    case "$v" in y|Y|yes|YES) v="$(pick_name category)" ;; *) v="" ;; esac
   done
 
   printf '%s\n' "$(lc 'b) Pin an agent (blank = skip)' 'b) 固定子代理的模型（留空=跳过）')" >&2
-  v="$(ask "$(lc '   agent name (e.g. explore, librarian)' '   子代理名称（例：explore、librarian）')" '')"
+  v="$(ask "$(lc '   add an agent? [y/N]' '   要固定子代理吗？[y/N]')" 'n')"
+  case "$v" in y|Y|yes|YES) : ;; *) v="" ;; esac
+  if [ -n "$v" ]; then v="$(pick_name agent)"; fi
   while [ -n "$v" ]; do
     if [ ${#MODEL_IDS[@]} -gt 0 ]; then
       spec="$(pick_one_model)" || spec=""
@@ -601,7 +685,8 @@ agent_wizard() {
       spec="$(ask "$(lc '   model as provider/model[:level]' '   模型，格式 provider/model[:档位]')" '')"
     fi
     if [ -n "$spec" ]; then AGENTS+=("$v=$spec"); fi
-    v="$(ask "$(lc '   another agent (blank = done)' '   另一个子代理（留空=完成）')" '')"
+    v="$(ask "$(lc '   another agent? [y/N]' '   还要固定其他子代理吗？[y/N]')" 'n')"
+    case "$v" in y|Y|yes|YES) v="$(pick_name agent)" ;; *) v="" ;; esac
   done
 
   v="$(ask "$(lc 'c) Task engine setting as KEY=VALUE (e.g. default_concurrency=4)' 'c) 任务引擎设置 KEY=VALUE（例：default_concurrency=4）')" '')"

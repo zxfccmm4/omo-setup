@@ -272,23 +272,27 @@ function Invoke-AgentWizard {
   }
 
   Write-Host (Lc 'a) Pin a task category (blank = skip)' 'a) 固定任务分类的模型（留空=跳过）')
-  $v = Ask (Lc '   category name (e.g. quick, ultrabrain)' '   分类名称（例：quick、ultrabrain）') $null
+  $v = Ask (Lc '   add a category? [y/N]' '   要固定分类吗？[y/N]') 'n'
+  if ($v -notmatch '^(y|yes)$') { $v = $null } else { $v = Pick-Name 'category' }
   while ($v) {
     $spec = ''
     if ($list) { $spec = Select-OneModel $list }
     else { $spec = Ask (Lc '   model as provider/model[:level]' '   模型，格式 provider/model[:档位]') $null }
     if ($spec) { $script:Category += "$v=$spec" }
-    $v = Ask (Lc '   another category (blank = done)' '   另一个分类（留空=完成）') $null
+    $v = Ask (Lc '   another category? [y/N]' '   还要固定其他分类吗？[y/N]') 'n'
+    if ($v -match '^(y|yes)$') { $v = Pick-Name 'category' } else { $v = $null }
   }
 
   Write-Host (Lc 'b) Pin an agent (blank = skip)' 'b) 固定子代理的模型（留空=跳过）')
-  $v = Ask (Lc '   agent name (e.g. explore, librarian)' '   子代理名称（例：explore、librarian）') $null
+  $v = Ask (Lc '   add an agent? [y/N]' '   要固定子代理吗？[y/N]') 'n'
+  if ($v -notmatch '^(y|yes)$') { $v = $null } else { $v = Pick-Name 'agent' }
   while ($v) {
     $spec = ''
     if ($list) { $spec = Select-OneModel $list }
     else { $spec = Ask (Lc '   model as provider/model[:level]' '   模型，格式 provider/model[:档位]') $null }
     if ($spec) { $script:Agent += "$v=$spec" }
-    $v = Ask (Lc '   another agent (blank = done)' '   另一个子代理（留空=完成）') $null
+    $v = Ask (Lc '   another agent? [y/N]' '   还要固定其他子代理吗？[y/N]') 'n'
+    if ($v -match '^(y|yes)$') { $v = Pick-Name 'agent' } else { $v = $null }
   }
 
   $v = Ask (Lc 'c) Task engine setting as KEY=VALUE (e.g. default_concurrency=4)' 'c) 任务引擎设置 KEY=VALUE（例：default_concurrency=4）') $null
@@ -415,44 +419,94 @@ function Get-ProviderName {
   return $script:Provider
 }
 
+function Build-View($list, $filter) {
+  if (-not $filter) { return @($list) }
+  return @($list | Where-Object { "$($_.Id) $($_.Name)" -like "*$filter*" })
+}
+
+function Pick-Name($kind) {
+  if ($kind -eq 'category') {
+    $names = @('architect','artistry','quick','deep-low','deep-high','ultrabrain','unspecified-low','unspecified-high','visual-engineering','writing')
+  } else {
+    $names = @('explore','librarian','plan-consultant','plan-reviewer')
+  }
+  Write-Host (Lc '   built-in names:' '   内置名称：')
+  for ($i = 0; $i -lt $names.Count; $i++) { Write-Host ("     {0}) {1}" -f ($i + 1), $names[$i]) }
+  Write-Host (Lc '0) type a custom name' '0) 手动输入名称')
+  $input = Ask (Lc '   choose [0-N]' '   请选择 [0-N]') '0'
+  if ($input -match '^(\d+)$') {
+    $i = [int]$input
+    if ($i -ge 1 -and $i -le $names.Count) { return $names[$i - 1] }
+  }
+  if ($input -and $input -notmatch '^(0|\d+)$') { return $input }
+  return (Ask (Lc '   name' '   名称') $null)
+}
+
+function Show-View($view, $max) {
+  for ($i = 0; $i -lt [Math]::Min($view.Count, $max); $i++) {
+    Write-Host ("   {0}) {1}`t{2}" -f ($i + 1), $view[$i].Id, $view[$i].Name)
+  }
+  if ($view.Count -gt $max) {
+    Write-Host (Lc "   ... $($view.Count - $max) more - type text to filter, or r for the full list" "   还有 $($view.Count - $max) 个 - 输入文字过滤，或输入 r 显示全部")
+  }
+  Write-Host (Lc "   ($($view.Count) shown)" "   （共 $($view.Count) 个）")
+}
+
 function Select-Models($list) {
-  Write-Host ''
-  Write-Host (Lc "models from ${BaseUrl}:" "来自 ${BaseUrl} 的模型：")
-  for ($i = 0; $i -lt [Math]::Min($list.Count, 60); $i++) {
-    Write-Host ("   {0}) {1}`t{2}" -f ($i + 1), $list[$i].Id, $list[$i].Name)
-  }
-  if ($list.Count -gt 60) { Write-Host (Lc "   ... $($list.Count - 60) more" "   ... 还有 $($list.Count - 60) 个") }
-  $input = Ask (Lc 'select: all / 1,3 / 2-4 (blank = all)' '请选择：all / 1,3 / 2-4（留空=全部）') ''
-  if (-not $input -or $input -match '^(all|ALL)$') {
-    return (($list | ForEach-Object { $_.Id }) -join ',')
-  }
-  $ids = @()
-  foreach ($token in ($input -replace ',', ' ').Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)) {
-    if ($token -match '^(\d+)-(\d+)$') {
-      $a = [int]$Matches[1]; $b = [int]$Matches[2]
-      for ($i = $a; $i -le $b; $i++) { if ($i -ge 1 -and $i -le $list.Count) { $ids += $list[$i - 1].Id } }
-    } elseif ($token -match '^(\d+)$') {
-      $i = [int]$Matches[1]
-      if ($i -ge 1 -and $i -le $list.Count) { $ids += $list[$i - 1].Id }
+  $filter = ''
+  while ($true) {
+    $view = Build-View $list $filter
+    if ($view.Count -eq 0) { Warn (Lc 'nothing matched that filter' '没有匹配的模型'); $filter = ''; continue }
+    Write-Host ''
+    Write-Host (Lc "models from ${BaseUrl}:" "来自 ${BaseUrl} 的模型：")
+    Show-View $view 60
+    $input = Ask (Lc 'select: all / 1,3 / 2-4 / text filter (blank = all)' '请选择：all / 1,3 / 2-4 / 过滤词（留空=全部）') ''
+    if (-not $input -or $input -match '^(all|ALL)$') {
+      return (($view | ForEach-Object { $_.Id }) -join ',')
     }
+    $ids = @()
+    $valid = $true
+    foreach ($token in ($input -replace ',', ' ').Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries)) {
+      if ($token -match '^(\d+)-(\d+)$') {
+        $a = [int]$Matches[1]; $b = [int]$Matches[2]
+        if ($a -lt 1 -or $b -gt $view.Count -or $a -gt $b) { $valid = $false; break }
+        for ($i = $a; $i -le $b; $i++) { $ids += $view[$i - 1].Id }
+      } elseif ($token -match '^(\d+)$') {
+        $i = [int]$Matches[1]
+        if ($i -lt 1 -or $i -gt $view.Count) { $valid = $false; break }
+        $ids += $view[$i - 1].Id
+      } else {
+        $valid = $false
+        break
+      }
+    }
+    if (-not $valid -or $ids.Count -eq 0) {
+      if ($valid) { $filter = $input } else { Warn (Lc "invalid selection '$input'" "无效的选择 '$input'") }
+      continue
+    }
+    return (($ids | Select-Object -Unique) -join ',')
   }
-  if ($ids.Count -eq 0) { return $null }
-  return (($ids | Select-Object -Unique) -join ',')
 }
 
 function Select-OneModel($list) {
-  Write-Host ''
-  Write-Host (Lc 'pick a model:' '选择模型：')
-  for ($i = 0; $i -lt [Math]::Min($list.Count, 60); $i++) {
-    Write-Host ("   {0}) {1}`t{2}" -f ($i + 1), $list[$i].Id, $list[$i].Name)
+  $filter = ''
+  $max = 15
+  while ($true) {
+    $view = Build-View $list $filter
+    if ($view.Count -eq 0) { Warn (Lc 'nothing matched that filter' '没有匹配的模型'); $filter = ''; continue }
+    Write-Host ''
+    Write-Host (Lc 'pick a model:' '选择模型：')
+    Show-View $view $max
+    $input = Ask (Lc 'number / text to filter / r = all / blank = skip' '编号 / 文字过滤 / r 全部 / 留空跳过') ''
+    if (-not $input) { return $null }
+    if ($input -match '^(r|R|all|ALL)$') { $max = 200; continue }
+    if ($input -notmatch '^(\d+)$') { $filter = $input; continue }
+    $i = [int]$input
+    if ($i -lt 1 -or $i -gt $view.Count) { Warn (Lc "invalid number '$input'" "无效编号 '$input'"); continue }
+    $prov = Get-ProviderName
+    if (-not $prov) { return $view[$i - 1].Id }
+    return "$prov/$($view[$i - 1].Id)"
   }
-  $input = Ask (Lc 'model number (blank = skip)' '模型编号（留空=跳过）') ''
-  if ($input -notmatch '^(\d+)$') { return $null }
-  $i = [int]$Matches[1]
-  if ($i -lt 1 -or $i -gt $list.Count) { return $null }
-  $prov = Get-ProviderName
-  if (-not $prov) { return $list[$i - 1].Id }
-  return "$prov/$($list[$i - 1].Id)"
 }
 
 function Ask-Reasoning {

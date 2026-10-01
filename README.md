@@ -93,7 +93,7 @@ git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
 | 能力 | 说明 |
 | --- | --- |
 | 🧭 **交互式向导** | 先选语言（English / 简体中文），再逐步引导填写 base URL、API key（隐藏输入），自动拉取端点模型列表供编号选择，写盘前先确认。 |
-| 🎛️ **模型选择** | 通过 `GET <baseUrl>/models` 拉取可用模型，支持 `all` / `1,3` / `2-4` / 关键词过滤；多智能体配置里也可直接从同一列表挑选。 |
+| 🎛️ **模型选择** | 通过 `GET <baseUrl>/models` 拉取可用模型；选模型时可输入关键词先过滤（如 `hdapi` 或 `model-9`）再选编号，支持 `all` / `1,3` / `2-4`；多智能体配置用同一列表。 |
 | 🛡️ **拉取不卡死** | 拉取模型列表带 20 秒超时（覆盖响应体读取，服务端挂起连接也不会永久卡住）；失败时打印具体原因（如 `HTTP 401`、`timed out after 20s`）并自动退回手动输入。 |
 | 🔔 **告警处理** | 自动判断所配模型是否命中 OmO 官方推荐梯队，未命中时写入 `warnings.offRecommendedModel`，避免启动时的 “Non-recommended model” 提示。 |
 | 🔍 **智能检测** | 已安装 `omo` 就跳过安装；未安装则询问后自动安装。 |
@@ -112,7 +112,7 @@ git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
    - 已安装 → 打印版本并**跳过**安装。
    - 未安装 → 询问是否安装，确认后运行官方安装脚本 `curl -fsSL https://get.omo.dev/install.sh | bash`（Windows：`irm https://get.omo.dev/install.ps1 | iex`）；失败时回退到 `bun add -g omo-ai` / `npm i -g omo-ai`。
 2. **准备运行时** —— 写配置需要 Node.js 或 Bun；两者都没有时自动安装（Homebrew / NodeSource APT / Bun 脚本，见[依赖](#requirements)）。
-3. **逐步配置** —— 先选语言（English / 简体中文），再依次询问 base URL、API key（隐藏输入）；脚本会尝试拉取 `GET <baseUrl>/models` 并把模型列表编号列出，按 `all` / `1,3` / `2-4` / 关键词过滤选择，拉取失败则打印原因并退回手动输入。随后是 provider 名称、API 协议、默认模型，最后打印摘要并请求确认。
+3. **逐步配置** —— 先选语言（English / 简体中文），再依次询问 base URL、API key（隐藏输入）；脚本会尝试拉取 `GET <baseUrl>/models` 并把模型列表编号列出，可先输关键词过滤再选编号（`all` / `1,3` / `2-4` 均支持），拉取失败则打印原因并退回手动输入。随后是 provider 名称、API 协议、默认模型，最后打印摘要（模型多时只列前几个）并请求确认。
 4. **写入配置** —— 确认后才写盘；输入 `n` 取消且不产生任何文件。
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
@@ -338,6 +338,20 @@ OMO_MODELS=gpt-4o \
 <a id="faq"></a>
 
 ## ❓ 常见问题
+
+<details>
+<summary><b>多智能体配置要一个个手输分类名，太繁琐？</b></summary>
+
+已优化：分类和子代理名称会列出内置菜单（分类：`architect`/`artistry`/`quick`/`deep-low`/`deep-high`/`ultrabrain`/`unspecified-low`/`unspecified-high`/`visual-engineering`/`writing`；子代理：`explore`/`librarian`/`plan-consultant`/`plan-reviewer`），输编号即可，也支持 `0` 手动输入。选模型时同样支持先输关键词过滤（如 `hdapi`）再选编号，输 `r` 可展开完整列表；每一步都可直接回车跳过。
+
+</details>
+
+<details>
+<summary><b>macOS 报 <code>mktemp: mkstemp failed ... File exists</code>？</b></summary>
+
+已修复。macOS 的 BSD `mktemp` 只替换模板**末尾**的 `X`，旧版脚本用 `omo-config.XXXXXX.mjs` 作模板会生成同名文件，第二次运行就报 File exists。现在改为先建临时目录再放入 `omo-config.mjs`。升级到最新脚本即可；旧的残留文件可删：`rm -f /tmp/omo-config.XXXXXX.mjs`。
+
+</details>
 
 <details>
 <summary><b>卡在「正在从端点获取模型列表…」怎么办？</b></summary>
