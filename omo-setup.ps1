@@ -58,8 +58,8 @@ function Die($m)  { Write-Host "xx $m" -ForegroundColor Red; exit 1 }
 
 function Mask($s) {
   if (-not $s) { return '' }
-  if ($s.Length -le 8) { return '********' }
-  return $s.Substring(0,4) + '...' + $s.Substring($s.Length-4)
+  if ($s.Length -le 10) { return '********' }
+  return $s.Substring(0,5) + '...' + $s.Substring($s.Length-5)
 }
 
 function Ask($msg, $default) {
@@ -70,12 +70,27 @@ function Ask($msg, $default) {
   return $v
 }
 
+# API keys: one * per typed character (a failed paste or typo is obvious
+# without printing the key); after Enter the line is replaced by the first and
+# last 5 characters, and the write summary prints the same mask.
 function Ask-Secret($msg) {
   Write-Host "${msg}: " -NoNewline -ForegroundColor Gray
-  $secure = Read-Host -AsSecureString
-  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+  $val = ''
+  while ($true) {
+    $key = [Console]::ReadKey($true)
+    if ($key.Key -eq [ConsoleKey]::Enter) { break }
+    if ($key.Key -eq [ConsoleKey]::Backspace) {
+      if ($val.Length -gt 0) { $val = $val.Substring(0, $val.Length - 1); Write-Host "`b `b" -NoNewline }
+      continue
+    }
+    if ($key.KeyChar -and [int][char]$key.KeyChar -ge 32) {
+      $val += $key.KeyChar
+      Write-Host '*' -NoNewline
+    }
+  }
+  $masked = Mask $val
+  Write-Host "$([char]27)[A`r$([char]27)[K${msg}: $masked"
+  return $val
 }
 
 function Ask-Yes($msg, $default) {

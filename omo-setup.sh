@@ -90,7 +90,17 @@ info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
+ECHO_SAVED=""
+
+restore_echo() {
+  if [ -n "$ECHO_SAVED" ]; then
+    stty "$ECHO_SAVED" < /dev/tty 2>/dev/null || stty echo < /dev/tty 2>/dev/null || true
+    ECHO_SAVED=""
+  fi
+}
+
 cleanup() {
+  restore_echo
   if [ -n "$TMP_CONFIG" ] && [ -f "$TMP_CONFIG" ]; then rm -f "$TMP_CONFIG"; fi
   if [ -n "$TMP_CONFIG_DIR" ] && [ -d "$TMP_CONFIG_DIR" ]; then rm -rf "$TMP_CONFIG_DIR"; fi
   if [ -n "$TMP_MODELS" ] && [ -f "$TMP_MODELS" ]; then rm -f "$TMP_MODELS"; fi
@@ -101,7 +111,7 @@ trap cleanup EXIT
 
 mask() {
   local s="$1" n=${#1}
-  if [ "$n" -le 8 ]; then printf '********'; else printf '%s...%s' "${s:0:4}" "${s: -4}"; fi
+  if [ "$n" -le 10 ]; then printf '********'; else printf '%s...%s' "${s:0:5}" "${s: -5}"; fi
 }
 
 have_tty() { { : </dev/tty; } 2>/dev/null; }
@@ -164,11 +174,34 @@ ask() {
   printf '%s' "${val:-$def}"
 }
 
+# API keys: one * per typed character, so a failed paste or a typo is obvious
+# without printing the key; after Enter the line is replaced by the first and
+# last 5 characters, and the summary prints the same mask.
 ask_secret() {
-  local msg="$1" val
-  printf '%s: ' "$msg" >&2
-  if have_tty; then IFS= read -rs val < /dev/tty || true; else IFS= read -rs val || true; fi
-  printf '\n' >&2
+  local msg="$1" val="" masked c
+  if have_tty; then
+    # Echo is disabled before the prompt is printed, so even an immediate
+    # paste cannot reach the terminal's own echo.
+    ECHO_SAVED="$(stty -g < /dev/tty 2>/dev/null || true)"
+    if [ -n "$ECHO_SAVED" ]; then stty -echo < /dev/tty 2>/dev/null || true; fi
+    printf '%s: ' "$msg" >&2
+    while IFS= read -r -n1 c < /dev/tty; do
+      case "$c" in
+        $'\177'|$'\b')
+          if [ -n "$val" ]; then val="${val%?}"; printf '\b \b' >&2; fi
+          ;;
+        ''|$'\n'|$'\r') break ;;
+        *) val="$val$c"; printf '*' >&2 ;;
+      esac
+    done
+    printf '\n' >&2
+    restore_echo
+    masked="$(mask "$val")"
+    printf '\033[A\r\033[K%s: %s\n' "$msg" "$masked" >&2
+  else
+    printf '%s: ' "$msg" >&2
+    IFS= read -r val || true
+  fi
   printf '%s' "$val"
 }
 
