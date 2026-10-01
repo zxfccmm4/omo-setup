@@ -29,6 +29,18 @@
  *   --set-json JSON                 deep-merge an arbitrary object into omo.jsonc
  *   --omo-json FILE                 deep-merge a JSON/JSONC file into omo.jsonc
  *   --no-agent-config               never touch omo.jsonc
+ *
+ * Other flags:
+ *   --lang en|zh                    message language (default: OMO_LANG, else en)
+ *   --fetch-models                  print the endpoint's model list, one id per line
+ *                                   (GET <baseUrl>/models; needs --base-url/--api-key)
+ *   --print-models                  print the models configured for a provider
+ *   --print-provider                print the provider name these inputs resolve to
+ *   --models-file FILE              read "id<TAB>name" lines as the model list
+ *   --recommended-warning on|off|auto
+ *                                   settings.json warnings.offRecommendedModel;
+ *                                   auto writes it only when no configured model is
+ *                                   on OmO's recommended ladder
  */
 
 import fs from "node:fs";
@@ -76,6 +88,46 @@ const LADDER = [
   "gpt-6-sol",
   "glm-5.3",
 ];
+
+// The runtime's recommended-model ladder (mirrors
+// dist/core/extensions/builtin/recommended-models/index.js in senpi). The
+// session-start notice fires when the initial model's id is not on this
+// ladder, and settings.warnings.offRecommendedModel silences it. The provider
+// lanes below only matter for the runtime's auto-switch preference (which
+// model it would rather use), so the ladder stays provider-independent here.
+const RECOMMENDED_LADDER = [
+  "claude-opus-5-5",
+  "claude-fable-5-1",
+  "kimi-k3",
+  "gpt-6-astra",
+  "gpt-6.1-sol",
+  "glm-5.3",
+];
+
+const MODEL_ID_SUFFIXES = ["-ultrafast", "-unlocked", "-256k", "-fast"];
+
+// Same normalization the runtime applies before comparing model ids.
+function canonicalModelId(id) {
+  let canonical = String(id).toLowerCase();
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const suffix of MODEL_ID_SUFFIXES) {
+      if (canonical.endsWith(suffix)) {
+        canonical = canonical.slice(0, -suffix.length);
+        stripped = true;
+        break;
+      }
+    }
+  }
+  return canonical === "k3" ? "kimi-k3" : canonical;
+}
+
+// True when one of the given model ids is on the recommended ladder, so the
+// runtime would not warn about the initial model.
+function hasRecommendedModel(models) {
+  return (models || []).some((id) => RECOMMENDED_LADDER.includes(canonicalModelId(id)));
+}
 
 // Official example configurations from the Agent-Model Matching guide, adapted
 // as starting templates. Provider prefixes match the guide; adjust to the
@@ -277,6 +329,170 @@ function parseArgs(argv) {
       out[key] = value;
     }
   }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Language (en / zh). The setup wizards pick the language first and pass it
+// down via --lang; OMO_LANG works as the environment default.
+// ---------------------------------------------------------------------------
+
+const MESSAGES = {
+  en: {
+    "provider.written": "provider   : {0}",
+    "models.written": "models     : {0}",
+    "modelsFile.written": "models.json: {0}",
+    "settingsFile.written": "settings   : {0}",
+    "multiAgent.written": "multi-agent config:",
+    "omoJsonc.written": "omo.jsonc  : {0}",
+    "advice.line": "advice     : {0}",
+    "updated": "omo config updated.",
+    "dryRun.wouldUpdate": "[dry-run] would update {0}",
+    "backupSuffix": " (backup: {0})",
+    "defaultLabel": "default    : {0}",
+    "apiLabel": "api        : {0}",
+    "baseUrlLabel": "baseUrl    : {0}",
+    "models.printed": "provider {0}: {1}",
+    "models.none": "provider {0} is not configured in {1}",
+    "models.empty": "provider {0} has no models configured",
+    "err.fetchModelsNeedsProvider": "--fetch-models needs --base-url (and --api-key unless the endpoint is open)",
+    "err.modelsFileNeedsProvider": "--models-file needs --base-url to derive the provider name (or pass --provider)",
+    "err.noProvider": "no provider: pass --base-url/--api-key/--models, or --print-models with a provider",
+    "err.unknownLang": "unknown --lang \"{0}\" (use en or zh)",
+    "modelsFile.read": "models-file: {0} model(s) from {1}",
+    "modelsFile.missing": "--models-file not found: {0}",
+    "modelsFile.empty": "--models-file has no usable model ids: {0}",
+  },
+  zh: {
+    "provider.written": "provider   ：{0}",
+    "models.written": "models     ：{0}",
+    "modelsFile.written": "models.json：{0}",
+    "settingsFile.written": "settings   ：{0}",
+    "multiAgent.written": "多智能体配置：",
+    "omoJsonc.written": "omo.jsonc  ：{0}",
+    "advice.line": "建议       ：{0}",
+    "updated": "omo 配置已更新。",
+    "dryRun.wouldUpdate": "[dry-run] 将更新 {0}",
+    "backupSuffix": "（备份：{0}）",
+    "defaultLabel": "默认模型   ：{0}",
+    "apiLabel": "协议       ：{0}",
+    "baseUrlLabel": "baseUrl    ：{0}",
+    "models.printed": "provider {0}：{1}",
+    "models.none": "provider {0} 未在 {1} 中配置",
+    "models.empty": "provider {0} 未配置任何模型",
+    "err.fetchModelsNeedsProvider": "--fetch-models 需要 --base-url（如端点不公开还需 --api-key）",
+    "err.modelsFileNeedsProvider": "--models-file 需要 --base-url 以推导 provider 名称（或直接传 --provider）",
+    "err.noProvider": "没有 provider：请传 --base-url/--api-key/--models，或用 --print-models 指定 provider",
+    "err.unknownLang": "未知 --lang \"{0}\"（可用 en 或 zh）",
+    "modelsFile.read": "models-file：从 {1} 读取到 {0} 个模型",
+    "modelsFile.missing": "--models-file 不存在：{0}",
+    "modelsFile.empty": "--models-file 中没有可用的模型 id：{0}",
+  },
+};
+
+let LANG = "en";
+
+function setLang(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "zh" || v === "zh-cn" || v === "zh-hans" || v === "cn") {
+    LANG = "zh";
+    return;
+  }
+  if (v === "en" || v === "en-us") {
+    LANG = "en";
+    return;
+  }
+  throw new Error(MESSAGES.en["err.unknownLang"].replace("{0}", value));
+}
+
+function t(key, ...args) {
+  const table = MESSAGES[LANG] || MESSAGES.en;
+  const template = table[key] !== undefined ? table[key] : MESSAGES.en[key];
+  if (template === undefined) return key;
+  return template.replace(/\{(\d+)\}/g, (m, i) => {
+    const v = args[Number(i)];
+    return v === undefined || v === null ? "" : String(v);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Model listing helpers
+// ---------------------------------------------------------------------------
+
+// Never print credentials that may sit in the base URL (userinfo or query).
+function displayUrl(url) {
+  const query = [...url.searchParams.keys()]
+    .map((name) => `${encodeURIComponent(name)}=<redacted>`)
+    .join("&");
+  return `${url.origin}${url.pathname}${query ? `?${query}` : ""}`;
+}
+
+// GET <baseUrl>/models (the same URL senpi's model discovery uses). Returns
+// [{ id, name }]; auth is optional so open endpoints work too.
+async function fetchModelList(baseUrl, apiKey) {
+  const url = new URL(String(baseUrl).trim());
+  url.pathname = `${url.pathname.replace(/\/+$/u, "")}/models`;
+  const headers = { accept: "application/json" };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  let response;
+  try {
+    response = await fetch(url, { headers, signal: controller.signal });
+  } catch (err) {
+    throw new Error(`GET ${displayUrl(url)} failed: ${err && err.message ? err.message : err}`);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!response.ok) {
+    throw new Error(`GET ${displayUrl(url)} failed: HTTP ${response.status}`);
+  }
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`GET ${displayUrl(url)} did not return JSON`);
+  }
+  const data = Array.isArray(payload)
+    ? payload
+    : payload && Array.isArray(payload.data)
+      ? payload.data
+      : undefined;
+  if (!Array.isArray(data)) {
+    throw new Error(`GET ${displayUrl(url)} did not return a model list`);
+  }
+  const seen = new Set();
+  const out = [];
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object" || typeof entry.id !== "string") continue;
+    const id = entry.id.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const name = typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : id;
+    out.push({ id, name });
+  }
+  return out;
+}
+
+// "id<TAB>name" per line; blank lines and # comments are ignored.
+function readModelsFile(file) {
+  const resolved = path.resolve(String(file).replace(/^~(?=$|\/)/, os.homedir()));
+  if (!fs.existsSync(resolved)) {
+    throw new Error(t("modelsFile.missing", resolved));
+  }
+  const out = [];
+  const seen = new Set();
+  for (const line of fs.readFileSync(resolved, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const tab = trimmed.indexOf("\t");
+    const id = (tab === -1 ? trimmed : trimmed.slice(0, tab)).trim();
+    const name = tab === -1 ? id : trimmed.slice(tab + 1).trim() || id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name });
+  }
+  if (!out.length) throw new Error(t("modelsFile.empty", resolved));
   return out;
 }
 
@@ -689,6 +905,8 @@ function summarizeAgentPatch(patch) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
 
+  setLang(firstDefined(args.lang, process.env.OMO_LANG) || "en");
+
   const baseUrl = normalizeBaseUrl(
     firstDefined(args["base-url"], args.baseUrl, process.env.OMO_BASE_URL) || "",
   );
@@ -700,12 +918,28 @@ function main() {
   const apiType = normalizeApiType(
     firstDefined(args["api-type"], process.env.OMO_API_TYPE),
   );
-  const models = parseModels(
-    firstDefined(args.models, process.env.OMO_MODELS) || "",
-  );
   const dryRun = args["dry-run"] === "true";
   const noDefault = args["no-default"] === "true";
   const noAgentConfig = args["no-agent-config"] === "true";
+  const recommendedWarning = String(
+    firstDefined(args["recommended-warning"], "auto"),
+  ).toLowerCase();
+  if (!["on", "off", "auto"].includes(recommendedWarning)) {
+    throw new Error(`invalid --recommended-warning "${args["recommended-warning"]}" (use on, off or auto)`);
+  }
+
+  // Model entries carry ids and display names; --models-file wins over --models
+  // so a wizard can hand over a fetched, user-curated list.
+  let modelEntries;
+  if (args["models-file"] !== undefined) {
+    modelEntries = readModelsFile(args["models-file"]);
+    console.error(t("modelsFile.read", modelEntries.length, args["models-file"]));
+  } else {
+    modelEntries = parseModels(
+      firstDefined(args.models, process.env.OMO_MODELS) || "",
+    ).map((id) => ({ id, name: id }));
+  }
+  const models = modelEntries.map((m) => m.id);
 
   if (args.advice === "true") {
     console.log(ADVICE);
@@ -715,8 +949,48 @@ function main() {
     return;
   }
 
+  // --fetch-models: print the endpoint's listing as "id<TAB>name" lines.
+  if (args["fetch-models"] === "true") {
+    if (!baseUrl) throw new Error(t("err.fetchModelsNeedsProvider"));
+    return fetchModelList(baseUrl, apiKey).then((list) => {
+      for (const m of list) console.log(`${m.id}\t${m.name}`);
+    });
+  }
+
   const agentPatch = noAgentConfig ? null : buildAgentPatch(args);
   const wantsProvider = Boolean(baseUrl || apiKey || models.length);
+
+  const providerName =
+    firstDefined(args.provider, process.env.OMO_PROVIDER) ||
+    (wantsProvider || args["models-file"] !== undefined
+      ? (baseUrl ? deriveProviderName(baseUrl) : undefined)
+      : undefined);
+
+  // --print-provider: echo the resolved provider id (wizard helper).
+  if (args["print-provider"] === "true") {
+    if (!providerName) throw new Error(t("err.noProvider"));
+    console.log(providerName);
+    return;
+  }
+
+  // --print-models: echo the provider's configured models as "id<TAB>name".
+  if (args["print-models"] === "true") {
+    if (!providerName) throw new Error(t("err.noProvider"));
+    const file = path.join(agentDir(), "models.json");
+    const doc = readJson(file, { providers: {} });
+    const provider = doc && doc.providers ? doc.providers[providerName] : undefined;
+    if (!provider) throw new Error(t("models.none", providerName, file));
+    const list = Array.isArray(provider.models) ? provider.models : [];
+    if (!list.length) throw new Error(t("models.empty", providerName));
+    for (const entry of list) {
+      if (typeof entry === "string") console.log(`${entry}\t${entry}`);
+      else if (entry && typeof entry.id === "string") {
+        const name = typeof entry.name === "string" && entry.name ? entry.name : entry.id;
+        console.log(`${entry.id}\t${name}`);
+      }
+    }
+    return;
+  }
 
   if (wantsProvider) {
     if (!baseUrl) throw new Error("missing --base-url (or OMO_BASE_URL)");
@@ -731,9 +1005,6 @@ function main() {
     );
   }
 
-  const providerName =
-    firstDefined(args.provider, process.env.OMO_PROVIDER) ||
-    (wantsProvider ? deriveProviderName(baseUrl) : undefined);
   if (providerName && !/^[a-zA-Z0-9._-]+$/.test(providerName)) {
     throw new Error(`invalid --provider "${providerName}"`);
   }
@@ -743,17 +1014,34 @@ function main() {
   const settingsFile = path.join(dir, "settings.json");
   const omoJsonc = agentPatch ? omoJsoncPath() : null;
 
+  // Prefer a model the runtime recognizes as recommended when the user did not
+  // pick a default explicitly; that is what keeps the session-start warning away.
+  const ladderHit = (models || []).find((id) =>
+    RECOMMENDED_LADDER.includes(canonicalModelId(id)),
+  );
   const defaultModel = firstDefined(
     args["default-model"],
     process.env.OMO_DEFAULT_MODEL,
+    ladderHit ? `${providerName}/${ladderHit}` : undefined,
     `${providerName}/${models[0]}`,
   );
+
+  // settings.warnings.offRecommendedModel silences the runtime's
+  // "Non-recommended model" notice. auto = silence it only when none of the
+  // configured models is on the recommended ladder for this provider.
+  let offRecommendedModel = null;
+  if (wantsProvider && recommendedWarning !== "on") {
+    if (recommendedWarning === "off") offRecommendedModel = true;
+    else if (recommendedWarning === "auto") {
+      offRecommendedModel = !hasRecommendedModel(models);
+    }
+  }
 
   const providerBlock = {
     baseUrl,
     api: apiType,
     apiKey,
-    models: models.map((id) => ({ id, name: id })),
+    models: modelEntries.map((m) => ({ id: m.id, name: m.name })),
   };
 
   const plan = {
@@ -764,6 +1052,7 @@ function main() {
     models,
     defaultProvider: providerName,
     defaultModel,
+    ...(offRecommendedModel !== null ? { offRecommendedModel } : {}),
     ...(agentPatch ? { omoJsonc, multiAgent: agentPatch } : {}),
   };
 
@@ -771,11 +1060,11 @@ function main() {
 
   if (dryRun) {
     if (wantsProvider) {
-      console.log("[dry-run] would update " + modelsFile);
-      if (!noDefault) console.log("[dry-run] would update " + settingsFile);
+      console.log(t("dryRun.wouldUpdate", modelsFile));
+      if (!noDefault) console.log(t("dryRun.wouldUpdate", settingsFile));
     }
-    if (agentPatch) console.log("[dry-run] would update " + omoJsonc);
-    for (const w of risks) console.log("[advice] " + w);
+    if (agentPatch) console.log(t("dryRun.wouldUpdate", omoJsonc));
+    for (const w of risks) console.log(`[advice] ${w}`);
     console.log(JSON.stringify(plan, null, 2));
     return;
   }
@@ -790,22 +1079,36 @@ function main() {
     writeJson(modelsFile, modelsJson);
 
     let settingsBackup = null;
-    if (!noDefault) {
+    if (!noDefault || offRecommendedModel !== null) {
       const settings = readJson(settingsFile, {});
       settingsBackup = backup(settingsFile);
-      settings.defaultProvider = providerName;
-      settings.defaultModel = defaultModel;
+      if (!noDefault) {
+        settings.defaultProvider = providerName;
+        settings.defaultModel = defaultModel;
+      }
+      if (offRecommendedModel !== null) {
+        settings.warnings = { ...(settings.warnings || {}), offRecommendedModel };
+      }
       writeJson(settingsFile, settings);
     }
 
-    console.log(`provider   : ${providerName}`);
-    console.log(`baseUrl    : ${baseUrl}`);
-    console.log(`api        : ${apiType}`);
-    console.log(`models     : ${models.join(", ")}`);
-    console.log(`models.json: ${modelsFile}${modelsBackup ? ` (backup: ${path.basename(modelsBackup)})` : ""}`);
+    console.log(t("provider.written", providerName));
+    console.log(t("baseUrlLabel", baseUrl));
+    console.log(t("apiLabel", apiType));
+    console.log(t("models.written", models.join(", ")));
+    console.log(
+      t(
+        "modelsFile.written",
+        modelsFile + (modelsBackup ? t("backupSuffix", path.basename(modelsBackup)) : ""),
+      ),
+    );
     if (!noDefault) {
-      console.log(`default    : ${defaultModel}`);
-      console.log(`settings   : ${settingsFile}${settingsBackup ? ` (backup: ${path.basename(settingsBackup)})` : ""}`);
+      console.log(t("defaultLabel", defaultModel));
+    }
+    if (settingsBackup) {
+      console.log(
+        t("settingsFile.written", settingsFile + t("backupSuffix", path.basename(settingsBackup))),
+      );
     }
   }
 
@@ -819,18 +1122,20 @@ function main() {
     const backupPath = backup(omoJsonc);
     writeJson(omoJsonc, merged);
     console.log("");
-    console.log("multi-agent config:");
+    console.log(t("multiAgent.written"));
     for (const line of summarizeAgentPatch(agentPatch)) console.log(line);
-    console.log(`omo.jsonc  : ${omoJsonc}${backupPath ? ` (backup: ${path.basename(backupPath)})` : ""}`);
-    for (const w of risks) console.log(`advice     : ${w}`);
+    console.log(
+      t("omoJsonc.written", omoJsonc + (backupPath ? t("backupSuffix", path.basename(backupPath)) : "")),
+    );
+    for (const w of risks) console.log(t("advice.line", w));
   }
 
-  console.log("omo config updated.");
+  console.log(t("updated"));
 }
 
-try {
-  main();
-} catch (err) {
-  console.error("omo-config: " + (err && err.message ? err.message : err));
-  process.exit(1);
-}
+Promise.resolve()
+  .then(main)
+  .catch((err) => {
+    console.error("omo-config: " + (err && err.message ? err.message : err));
+    process.exit(1);
+  });

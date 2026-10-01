@@ -92,7 +92,9 @@ git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
 
 | 能力 | 说明 |
 | --- | --- |
-| 🧭 **交互式向导** | 逐步引导填写 base URL、API key（隐藏输入）、模型、provider、协议、默认模型，写盘前先确认。 |
+| 🧭 **交互式向导** | 先选语言（English / 简体中文），再逐步引导填写 base URL、API key（隐藏输入），自动拉取端点模型列表供编号选择，写盘前先确认。 |
+| 🎛️ **模型选择** | 通过 `GET <baseUrl>/models` 拉取可用模型，支持 `all` / `1,3` / `2-4` / 关键词过滤；多智能体配置里也可直接从同一列表挑选。 |
+| 🔔 **告警处理** | 自动判断所配模型是否命中 OmO 官方推荐梯队，未命中时写入 `warnings.offRecommendedModel`，避免启动时的 “Non-recommended model” 提示。 |
 | 🔍 **智能检测** | 已安装 `omo` 就跳过安装；未安装则询问后自动安装。 |
 | 🖥️ **跨平台** | Linux / macOS 用 `omo-setup.sh`，Windows 用 `omo-setup.ps1`，配置逻辑共用 `omo-config.mjs`。 |
 | 🤖 **多智能体** | 可选配置 OmO 的任务分类、子代理、任务引擎、记忆与团队（写入 `~/.omo/omo.jsonc`）。 |
@@ -108,7 +110,7 @@ git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
 1. **检测 omo** —— 在 `PATH` 中查找 `omo`（并兜底检查 `~/.bun/bin`、`~/.local/bin`、`~/.omo/bin` 等常见目录）。
    - 已安装 → 打印版本并**跳过**安装。
    - 未安装 → 询问是否安装，确认后运行官方安装脚本 `curl -fsSL https://get.omo.dev/install.sh | bash`（Windows：`irm https://get.omo.dev/install.ps1 | iex`）；失败时回退到 `bun add -g omo-ai` / `npm i -g omo-ai`。
-2. **逐步配置** —— 依次询问 base URL、API key（隐藏输入）、模型列表、provider 名称、API 协议、默认模型，最后打印摘要并请求确认。
+2. **逐步配置** —— 先选语言（English / 简体中文），再依次询问 base URL、API key（隐藏输入）；脚本会尝试拉取 `GET <baseUrl>/models` 并把模型列表编号列出，按 `all` / `1,3` / `2-4` / 关键词过滤选择，拉取失败则退回手动输入。随后是 provider 名称、API 协议、默认模型，最后打印摘要并请求确认。
 3. **写入配置** —— 确认后才写盘；输入 `n` 取消且不产生任何文件。
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
@@ -297,6 +299,9 @@ OMO_MODELS=gpt-4o \
 | `--base-url` / `-BaseUrl` | `OMO_BASE_URL` | 接口 base URL |
 | `--api-key` / `-ApiKey` | `OMO_API_KEY` | API key |
 | `--models` / `-Models` | `OMO_MODELS` | 逗号分隔的模型 id 列表 |
+| `--models-file` / `-ModelsFile` | — | 从文件读取模型列表（每行 `id<TAB>名称`） |
+| `--lang` / `-Lang` | `OMO_LANG` | 向导与输出语言：`en`（默认）\| `zh` |
+| `--recommended-warning` / `-RecommendedWarning` | — | 是否静默 “Non-recommended model” 提示：`on` \| `off` \| `auto`（默认，未命中推荐梯队时写入） |
 | `--provider` / `-Provider` | `OMO_PROVIDER` | provider 名称，默认从域名推导 |
 | `--api-type` / `-ApiType` | `OMO_API_TYPE` | `openai-completions`（默认）\| `openai-responses` \| `anthropic-messages` |
 | `--default-model` / `-DefaultModel` | `OMO_DEFAULT_MODEL` | 默认模型，默认 `provider/<第一个模型>` |

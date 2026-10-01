@@ -17,6 +17,8 @@
 #   --base-url URL        endpoint base url            (env OMO_BASE_URL)
 #   --api-key KEY         provider api key             (env OMO_API_KEY)
 #   --models a,b,c        comma-separated model ids    (env OMO_MODELS)
+#   --models-file FILE    read "id<TAB>name" lines as the model list
+#   --lang en|zh          wizard and output language  (env OMO_LANG, default: en)
 #   --provider NAME       provider id                  (default: derived from host)
 #   --api-type TYPE       openai-completions|openai-responses|anthropic-messages
 #   --default-model ID    default model to select      (default: provider/<first>)
@@ -49,6 +51,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd |
 BASE_URL="${OMO_BASE_URL:-}"
 API_KEY="${OMO_API_KEY:-}"
 MODELS="${OMO_MODELS:-}"
+MODELS_FILE=""
+LANG_CODE="${OMO_LANG:-en}"
 PROVIDER="${OMO_PROVIDER:-}"
 API_TYPE="${OMO_API_TYPE:-}"
 DEFAULT_MODEL="${OMO_DEFAULT_MODEL:-}"
@@ -58,6 +62,13 @@ SKIP_INSTALL=0
 FORCE_INTERACTIVE=0
 CONFIG_SCRIPT=""
 TMP_CONFIG=""
+TMP_MODELS=""
+
+# Model list fetched from the endpoint (parallel arrays: id + display name).
+MODEL_IDS=()
+MODEL_NAMES=()
+SELECTED_IDS=()
+SELECTED_NAMES=()
 
 # Multi-agent config (written to omo.jsonc by omo-config.mjs)
 MEMORY=""
@@ -76,7 +87,11 @@ info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
-cleanup() { if [ -n "$TMP_CONFIG" ] && [ -f "$TMP_CONFIG" ]; then rm -f "$TMP_CONFIG"; fi; return 0; }
+cleanup() {
+  if [ -n "$TMP_CONFIG" ] && [ -f "$TMP_CONFIG" ]; then rm -f "$TMP_CONFIG"; fi
+  if [ -n "$TMP_MODELS" ] && [ -f "$TMP_MODELS" ]; then rm -f "$TMP_MODELS"; fi
+  return 0
+}
 trap cleanup EXIT
 
 mask() {
@@ -101,12 +116,16 @@ while [ $# -gt 0 ]; do
     --base-url) BASE_URL="$2"; shift 2 ;;
     --api-key) API_KEY="$2"; shift 2 ;;
     --models) MODELS="$2"; shift 2 ;;
+    --models-file) MODELS_FILE="$2"; shift 2 ;;
+    --lang) LANG_CODE="$2"; shift 2 ;;
     --provider) PROVIDER="$2"; shift 2 ;;
     --api-type) API_TYPE="$2"; shift 2 ;;
     --default-model) DEFAULT_MODEL="$2"; shift 2 ;;
     --base-url=*) BASE_URL="${1#*=}"; shift ;;
     --api-key=*) API_KEY="${1#*=}"; shift ;;
     --models=*) MODELS="${1#*=}"; shift ;;
+    --models-file=*) MODELS_FILE="${1#*=}"; shift ;;
+    --lang=*) LANG_CODE="${1#*=}"; shift ;;
     --provider=*) PROVIDER="${1#*=}"; shift ;;
     --api-type=*) API_TYPE="${1#*=}"; shift ;;
     --default-model=*) DEFAULT_MODEL="${1#*=}"; shift ;;
@@ -154,6 +173,160 @@ ask_yes() {
   read_tty val || true
   val="${val:-$def}"
   case "$val" in y|Y|yes|YES|Yes) return 0 ;; *) return 1 ;; esac
+}
+
+# lc "english" "中文" - print the string for the selected language.
+lc() {
+  if [ "$LANG_CODE" = zh ]; then printf '%s' "$2"; else printf '%s' "$1"; fi
+}
+
+join_by() { local sep="$1"; shift; local IFS="$sep"; printf '%s' "$*"; }
+
+choose_language() {
+  local v
+  case "$LANG_CODE" in zh|zh-cn|zh-hans|cn) LANG_CODE=zh ;; *) LANG_CODE=en ;; esac
+  printf '0) Language / 语言:  1) English  2) 简体中文\n' >&2
+  v="$(ask "$(lc '   choose [1-2]' '   请选择 [1-2]')" "$([ "$LANG_CODE" = zh ] && echo 2 || echo 1)")"
+  case "$v" in
+    2) LANG_CODE=zh ;;
+    1) LANG_CODE=en ;;
+  esac
+  info "$(lc 'language: English' '语言：简体中文')"
+}
+
+# Ask omo-config.mjs for the provider id derived from the base URL.
+provider_name() {
+  if [ -n "$PROVIDER" ]; then printf '%s' "$PROVIDER"; return 0; fi
+  local out
+  out="$(run_config --print-provider --base-url "$BASE_URL" --lang "$LANG_CODE" 2>/dev/null)" || return 1
+  PROVIDER="$out"
+  printf '%s' "$PROVIDER"
+}
+
+# Fetch <baseUrl>/models into MODEL_IDS / MODEL_NAMES.
+fetch_models() {
+  local rc=0
+  [ -n "$BASE_URL" ] || return 1
+  if [ -z "$TMP_MODELS" ]; then
+    TMP_MODELS="$(mktemp "${TMPDIR:-/tmp}/omo-models.XXXXXX")"
+  fi
+  run_config --fetch-models --base-url "$BASE_URL" --api-key "$API_KEY" \
+    --lang "$LANG_CODE" >"$TMP_MODELS" 2>/dev/null || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    warn "$(lc 'could not fetch the model list from the endpoint' '无法从该端点获取模型列表')"
+    return 1
+  fi
+  MODEL_IDS=()
+  MODEL_NAMES=()
+  local line id name
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    id="${line%%$'\t'*}"
+    if [ "$id" = "$line" ]; then name="$id"; else name="${line#*$'\t'}"; fi
+    MODEL_IDS+=("$id")
+    MODEL_NAMES+=("$name")
+  done < "$TMP_MODELS"
+  [ ${#MODEL_IDS[@]} -gt 0 ]
+}
+
+print_model_choices() {
+  local filter="$1" shown=0 i hay
+  for ((i = 0; i < ${#MODEL_IDS[@]}; i++)); do
+    hay="${MODEL_IDS[$i]} ${MODEL_NAMES[$i]}"
+    if [ -n "$filter" ]; then
+      case "$hay" in *"$filter"*) : ;; *) continue ;; esac
+    fi
+    shown=$((shown + 1))
+    if [ "$shown" -le 60 ]; then
+      printf '   %d) %s\t%s\n' "$((i + 1))" "${MODEL_IDS[$i]}" "${MODEL_NAMES[$i]}" >&2
+    fi
+  done
+  if [ "$shown" -gt 60 ]; then
+    printf '   ... %s\n' "$(lc "$((shown - 60)) more, type a filter to narrow" "还有 $((shown - 60)) 个，可输入过滤词缩小范围")" >&2
+  fi
+  printf '%s\n' "$(lc "   ($shown shown)" "   （共显示 $shown 个）")" >&2
+}
+
+collect_shown() {
+  local filter="$1" i hay
+  SELECTED_IDS=()
+  SELECTED_NAMES=()
+  for ((i = 0; i < ${#MODEL_IDS[@]}; i++)); do
+    hay="${MODEL_IDS[$i]} ${MODEL_NAMES[$i]}"
+    if [ -n "$filter" ]; then
+      case "$hay" in *"$filter"*) : ;; *) continue ;; esac
+    fi
+    SELECTED_IDS+=("${MODEL_IDS[$i]}")
+    SELECTED_NAMES+=("${MODEL_NAMES[$i]}")
+  done
+  [ ${#SELECTED_IDS[@]} -gt 0 ]
+}
+
+# "1,3 5-7" -> SELECTED_IDS / SELECTED_NAMES by 1-based index.
+parse_selection() {
+  local input="$1" token a b i
+  input="${input//,/ }"
+  SELECTED_IDS=()
+  SELECTED_NAMES=()
+  for token in $input; do
+    case "$token" in
+      *-*) a="${token%%-*}"; b="${token##*-}" ;;
+      *) a="$token"; b="$token" ;;
+    esac
+    case "$a" in ''|*[!0-9]*) return 1 ;; esac
+    case "$b" in ''|*[!0-9]*) return 1 ;; esac
+    if [ "$a" -lt 1 ] || [ "$b" -gt ${#MODEL_IDS[@]} ] || [ "$a" -gt "$b" ]; then return 1; fi
+    for ((i = a; i <= b; i++)); do
+      SELECTED_IDS+=("${MODEL_IDS[$((i - 1))]}")
+      SELECTED_NAMES+=("${MODEL_NAMES[$((i - 1))]}")
+    done
+  done
+  [ ${#SELECTED_IDS[@]} -gt 0 ]
+}
+
+# Interactive picker: fills SELECTED_IDS / SELECTED_NAMES.
+pick_models() {
+  local input filter="" sel
+  [ ${#MODEL_IDS[@]} -gt 0 ] || return 1
+  while :; do
+    printf '\n%s\n' "$(lc "models from $BASE_URL:" "来自 $BASE_URL 的模型：")" >&2
+    print_model_choices "$filter"
+    input="$(ask "$(lc 'select: all / 1,3 / 2-4 / a text filter (blank = all)' '请选择：all / 1,3 / 2-4 / 过滤词（留空=全部）')" '')"
+    sel="${input//[0-9]/}"
+    sel="${sel// /}"
+    sel="${sel//,/}"
+    sel="${sel//-/}"
+    if [ -z "$input" ] || [ "$input" = all ] || [ "$input" = ALL ]; then
+      if collect_shown "$filter"; then return 0; fi
+      warn "$(lc 'nothing matched that filter' '没有匹配的模型')"
+      filter=""
+    elif [ -z "$sel" ]; then
+      if parse_selection "$input"; then return 0; fi
+      warn "$(lc "invalid selection '$input'" "无效的选择 '$input'")"
+    else
+      filter="$input"
+    fi
+  done
+}
+
+# Ask for one model id, returned as "provider/model" (empty = skipped).
+pick_one_model() {
+  local input
+  [ ${#MODEL_IDS[@]} -gt 0 ] || return 1
+  printf '\n%s\n' "$(lc 'pick a model:' '选择模型：')" >&2
+  print_model_choices ""
+  input="$(ask "$(lc 'model number (blank = skip)' '模型编号（留空=跳过）')" '')"
+  case "$input" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "$input" -lt 1 ] || [ "$input" -gt ${#MODEL_IDS[@]} ]; then return 1; fi
+  local prov
+  prov="$(provider_name)" || return 1
+  printf '%s/%s' "$prov" "${MODEL_IDS[$((input - 1))]}"
+}
+
+ask_reasoning() {
+  local v
+  v="$(ask "$(lc 'reasoning level: off|minimal|low|medium|high|xhigh|max (blank = default)' '推理档位：off|minimal|low|medium|high|xhigh|max（留空=默认）')" '')"
+  printf '%s' "$v"
 }
 
 find_omo() {
@@ -222,52 +395,69 @@ run_config() {
 
 wizard() {
   printf '\n' >&2
-  info "step-by-step setup (press Enter to accept the [default])"
+  choose_language
+  printf '\n' >&2
+  info "$(lc 'step-by-step setup (press Enter to accept the [default])' '逐步配置（直接回车 = 采用 [默认值]）')"
   printf '\n' >&2
 
   local v
-  v="$(ask '1) Endpoint base URL (e.g. https://api.example.com/v1)' "$BASE_URL")"
-  [ -n "$v" ] || die "base URL is required"
+  v="$(ask "$(lc '1) Endpoint base URL (e.g. https://api.example.com/v1)' '1) 接口 base URL（例：https://api.example.com/v1）')" "$BASE_URL")"
+  [ -n "$v" ] || die "$(lc 'base URL is required' 'base URL 必填')"
   BASE_URL="$v"
 
-  v="$(ask_secret '2) API key')"
+  v="$(ask_secret "$(lc '2) API key' '2) API key')")"
   [ -n "$v" ] && API_KEY="$v"
-  [ -n "$API_KEY" ] || die "API key is required"
+  [ -n "$API_KEY" ] || die "$(lc 'API key is required' 'API key 必填')"
 
-  v="$(ask '3) Model ids, comma-separated (e.g. gpt-4o,gpt-4o-mini)' "$MODELS")"
-  [ -n "$v" ] || die "at least one model is required"
-  MODELS="$v"
+  # Try the endpoint's /models listing first; fall back to typing ids by hand.
+  if [ -z "$MODELS" ] && [ -z "$MODELS_FILE" ] && [ ${#SELECTED_IDS[@]} -eq 0 ]; then
+    info "$(lc 'fetching the model list from the endpoint...' '正在从端点获取模型列表...')"
+    if fetch_models; then
+      info "$(lc "found ${#MODEL_IDS[@]} models" "共发现 ${#MODEL_IDS[@]} 个模型")"
+      if pick_models; then
+        MODELS="$(join_by , "${SELECTED_IDS[@]}")"
+      fi
+    else
+      warn "$(lc 'falling back to typing model ids by hand' '改用手动输入模型 id')"
+    fi
+  fi
+  if [ -z "$MODELS" ] && [ -z "$MODELS_FILE" ]; then
+    v="$(ask "$(lc '3) Model ids, comma-separated (e.g. gpt-4o,gpt-4o-mini)' '3) 模型 id，逗号分隔（例：gpt-4o,gpt-4o-mini）')" "$MODELS")"
+    [ -n "$v" ] || die "$(lc 'at least one model is required' '至少需要一个模型')"
+    MODELS="$v"
+  fi
 
-  v="$(ask '4) Provider name (blank = auto from host)' "$PROVIDER")"
+  v="$(ask "$(lc '4) Provider name (blank = auto from host)' '4) Provider 名称（留空 = 由域名自动推导）')" "$PROVIDER")"
   PROVIDER="$v"
+  if [ -z "$PROVIDER" ]; then provider_name >/dev/null 2>&1 || true; fi
 
-  printf '5) API protocol:  1) openai-completions (default)  2) openai-responses  3) anthropic-messages\n' >&2
-  v="$(ask '   choose [1-3]' '1')"
+  printf '%s\n' "$(lc '5) API protocol:  1) openai-completions (default)  2) openai-responses  3) anthropic-messages' '5) API 协议：1) openai-completions（默认） 2) openai-responses 3) anthropic-messages')" >&2
+  v="$(ask "$(lc '   choose [1-3]' '   请选择 [1-3]')" '1')"
   case "$v" in
     1) API_TYPE="openai-completions" ;;
     2) API_TYPE="openai-responses" ;;
     3) API_TYPE="anthropic-messages" ;;
-    *) warn "unknown choice '$v', using openai-completions"; API_TYPE="openai-completions" ;;
+    *) warn "$(lc "unknown choice '$v', using openai-completions" "未知选项 '$v'，改用 openai-completions")"; API_TYPE="openai-completions" ;;
   esac
 
-  v="$(ask '6) Default model (blank = provider/<first model>)' "$DEFAULT_MODEL")"
+  v="$(ask "$(lc '6) Default model (blank = provider/<first model>)' '6) 默认模型（留空 = provider/<第一个模型>）')" "$DEFAULT_MODEL")"
   DEFAULT_MODEL="$v"
 
   printf '\n' >&2
-  info "about to write:"
-  printf '   Base URL : %s\n' "$BASE_URL" >&2
-  printf '   API key  : %s\n' "$(mask "$API_KEY")" >&2
-  printf '   Models   : %s\n' "$MODELS" >&2
-  printf '   Provider : %s\n' "${PROVIDER:-(auto)}" >&2
-  printf '   Protocol : %s\n' "$API_TYPE" >&2
+  info "$(lc 'about to write:' '即将写入：')"
+  printf '   %s : %s\n' "$(lc 'Base URL' 'Base URL')" "$BASE_URL" >&2
+  printf '   %s : %s\n' "$(lc 'API key ' 'API key ')" "$(mask "$API_KEY")" >&2
+  printf '   %s : %s\n' "$(lc 'Models  ' '模型    ')" "${MODELS:-$(lc '(from file)' '（来自文件）')}" >&2
+  printf '   %s : %s\n' "$(lc 'Provider' 'Provider')" "${PROVIDER:-(auto)}" >&2
+  printf '   %s : %s\n' "$(lc 'Protocol' '协议    ')" "$API_TYPE" >&2
   if [ "$NO_DEFAULT" -eq 0 ]; then
-    printf '   Default  : %s\n' "${DEFAULT_MODEL:-(provider/<first model>)}" >&2
+    printf '   %s : %s\n' "$(lc 'Default ' '默认模型')" "${DEFAULT_MODEL:-(provider/<first model>)}" >&2
   fi
   printf '\n' >&2
-  if ! ask_yes "7) Write this config?" "n"; then info "cancelled"; exit 0; fi
+  if ! ask_yes "$(lc '7) Write this config?' '7) 写入以上配置？')" "n"; then info "$(lc 'cancelled' '已取消')"; exit 0; fi
 
   printf '\n' >&2
-  if ask_yes "8) Configure multi-agent features now (categories / agents / task / memory) into ~/.omo/omo.jsonc?" "n"; then
+  if ask_yes "$(lc '8) Configure multi-agent features now (categories / agents / task / memory) into ~/.omo/omo.jsonc?' '8) 现在配置多智能体（任务分类 / 子代理 / 任务引擎 / 记忆）并写入 ~/.omo/omo.jsonc？')" "n"; then
     agent_wizard
   fi
 }
@@ -284,14 +474,14 @@ show_advice() {
 }
 
 agent_wizard() {
-  local v
+  local v spec level
   printf '\n' >&2
-  info "multi-agent setup (blank = keep current / skip)"
+  info "$(lc 'multi-agent setup (blank = keep current / skip)' '多智能体配置（留空 = 保持现状 / 跳过）')"
   printf '\n' >&2
 
-  printf '0) Start from an official example preset?\n' >&2
-  printf '   1) claude-openai  2) kimi-glm  3) deepseek-alternative  4) none (default)\n' >&2
-  v="$(ask '   choose [1-4]' '4')"
+  printf '%s\n' "$(lc '0) Start from an official example preset?' '0) 从官方示例预设开始？')" >&2
+  printf '%s\n' "$(lc '   1) claude-openai  2) kimi-glm  3) deepseek-alternative  4) none (default)' '   1) claude-openai  2) kimi-glm  3) deepseek-alternative  4) 不使用（默认）')" >&2
+  v="$(ask "$(lc '   choose [1-4]' '   请选择 [1-4]')" '4')"
   case "$v" in
     1) PRESETS+=(claude-openai) ;;
     2) PRESETS+=(kimi-glm) ;;
@@ -299,35 +489,62 @@ agent_wizard() {
     *) : ;;
   esac
 
-  v="$(ask 'a) Pin a task category as NAME=MODEL[:level] (e.g. quick=glm-5.3-flash)' '')"
+  # Offer the endpoint's model list for picking, so users type fewer ids.
+  if [ ${#MODEL_IDS[@]} -eq 0 ] && [ -n "$BASE_URL" ]; then
+    if fetch_models; then
+      info "$(lc "found ${#MODEL_IDS[@]} models on the endpoint" "在端点上发现 ${#MODEL_IDS[@]} 个模型")"
+    fi
+  fi
+
+  printf '%s\n' "$(lc 'a) Pin a task category (blank = skip)' 'a) 固定任务分类的模型（留空=跳过）')" >&2
+  v="$(ask "$(lc '   category name (e.g. quick, ultrabrain)' '   分类名称（例：quick、ultrabrain）')" '')"
   while [ -n "$v" ]; do
-    CATEGORIES+=("$v")
-    v="$(ask '   another category (blank = done)' '')"
+    if [ ${#MODEL_IDS[@]} -gt 0 ]; then
+      spec="$(pick_one_model)" || spec=""
+      if [ -n "$spec" ]; then
+        level="$(ask_reasoning)"
+        if [ -n "$level" ]; then spec="$spec:$level"; fi
+      fi
+    else
+      spec="$(ask "$(lc '   model as provider/model[:level]' '   模型，格式 provider/model[:档位]')" '')"
+    fi
+    if [ -n "$spec" ]; then CATEGORIES+=("$v=$spec"); fi
+    v="$(ask "$(lc '   another category (blank = done)' '   另一个分类（留空=完成）')" '')"
   done
 
-  v="$(ask 'b) Pin an agent as NAME=MODEL[:level] (e.g. explore=deepseek-flash:high)' '')"
+  printf '%s\n' "$(lc 'b) Pin an agent (blank = skip)' 'b) 固定子代理的模型（留空=跳过）')" >&2
+  v="$(ask "$(lc '   agent name (e.g. explore, librarian)' '   子代理名称（例：explore、librarian）')" '')"
   while [ -n "$v" ]; do
-    AGENTS+=("$v")
-    v="$(ask '   another agent (blank = done)' '')"
+    if [ ${#MODEL_IDS[@]} -gt 0 ]; then
+      spec="$(pick_one_model)" || spec=""
+      if [ -n "$spec" ]; then
+        level="$(ask_reasoning)"
+        if [ -n "$level" ]; then spec="$spec:$level"; fi
+      fi
+    else
+      spec="$(ask "$(lc '   model as provider/model[:level]' '   模型，格式 provider/model[:档位]')" '')"
+    fi
+    if [ -n "$spec" ]; then AGENTS+=("$v=$spec"); fi
+    v="$(ask "$(lc '   another agent (blank = done)' '   另一个子代理（留空=完成）')" '')"
   done
 
-  v="$(ask 'c) Task engine setting as KEY=VALUE (e.g. default_concurrency=4)' '')"
+  v="$(ask "$(lc 'c) Task engine setting as KEY=VALUE (e.g. default_concurrency=4)' 'c) 任务引擎设置 KEY=VALUE（例：default_concurrency=4）')" '')"
   while [ -n "$v" ]; do
     TASKS+=("$v")
-    v="$(ask '   another task key (blank = done)' '')"
+    v="$(ask "$(lc '   another task key (blank = done)' '   另一个任务键（留空=完成）')" '')"
   done
 
-  v="$(ask 'd) Memory subsystem: 1) enable  2) disable  (blank = leave unchanged)' '')"
+  v="$(ask "$(lc 'd) Memory subsystem: 1) enable  2) disable  (blank = leave unchanged)' 'd) 记忆子系统：1) 开启  2) 关闭（留空=不变）')" '')"
   case "$v" in
     1) MEMORY="on" ;;
     2) MEMORY="off" ;;
     *) : ;;
   esac
 
-  v="$(ask 'e) Define a team as NAME=JSON (blank = skip)' '')"
+  v="$(ask "$(lc 'e) Define a team as NAME=JSON (blank = skip)' 'e) 定义团队 NAME=JSON（留空=跳过）')" '')"
   while [ -n "$v" ]; do
     TEAMS+=("$v")
-    v="$(ask '   another team (blank = done)' '')"
+    v="$(ask "$(lc '   another team (blank = done)' '   另一个团队（留空=完成）')" '')"
   done
 }
 
@@ -365,18 +582,25 @@ if [ "$SHOW_ADVICE" -eq 1 ]; then
   :
 elif [ "$FORCE_INTERACTIVE" -eq 1 ]; then
   wizard
-elif [ -n "$BASE_URL" ] || [ -n "$API_KEY" ] || [ -n "$MODELS" ]; then
-  if [ -z "$BASE_URL" ] || [ -z "$API_KEY" ] || [ -z "$MODELS" ]; then wizard; fi
+elif [ -n "$BASE_URL" ] || [ -n "$API_KEY" ] || [ -n "$MODELS" ] || [ -n "$MODELS_FILE" ]; then
+  if [ -z "$MODELS" ] && [ -z "$MODELS_FILE" ]; then wizard; fi
+  if [ -z "$BASE_URL" ] || [ -z "$API_KEY" ]; then wizard; fi
 elif [ "$HAVE_AGENT_FLAGS" -eq 0 ]; then
   wizard
 fi
 
-CONFIG_ARGS=(--base-url "$BASE_URL" --api-key "$API_KEY" --models "$MODELS")
+CONFIG_ARGS=(--base-url "$BASE_URL" --api-key "$API_KEY")
+if [ -n "$MODELS_FILE" ]; then
+  CONFIG_ARGS+=(--models-file "$MODELS_FILE")
+else
+  CONFIG_ARGS+=(--models "$MODELS")
+fi
 # Only pass provider flags when they are present; a multi-agent-only run must
 # not send empty --base-url/--api-key/--models values.
-if [ -z "$BASE_URL" ] && [ -z "$API_KEY" ] && [ -z "$MODELS" ]; then
+if [ -z "$BASE_URL" ] && [ -z "$API_KEY" ] && [ -z "$MODELS" ] && [ -z "$MODELS_FILE" ]; then
   CONFIG_ARGS=()
 fi
+CONFIG_ARGS+=(--lang "$LANG_CODE")
 if [ -n "$PROVIDER" ]; then CONFIG_ARGS+=(--provider "$PROVIDER"); fi
 if [ -n "$API_TYPE" ]; then CONFIG_ARGS+=(--api-type "$API_TYPE"); fi
 if [ -n "$DEFAULT_MODEL" ]; then CONFIG_ARGS+=(--default-model "$DEFAULT_MODEL"); fi
