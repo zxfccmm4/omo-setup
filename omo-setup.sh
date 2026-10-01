@@ -63,6 +63,8 @@ FORCE_INTERACTIVE=0
 CONFIG_SCRIPT=""
 TMP_CONFIG=""
 TMP_MODELS=""
+TMP_MODELS_ERR=""
+FETCH_ERROR=""
 
 # Model list fetched from the endpoint (parallel arrays: id + display name).
 MODEL_IDS=()
@@ -90,6 +92,7 @@ die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 cleanup() {
   if [ -n "$TMP_CONFIG" ] && [ -f "$TMP_CONFIG" ]; then rm -f "$TMP_CONFIG"; fi
   if [ -n "$TMP_MODELS" ] && [ -f "$TMP_MODELS" ]; then rm -f "$TMP_MODELS"; fi
+  if [ -n "$TMP_MODELS_ERR" ] && [ -f "$TMP_MODELS_ERR" ]; then rm -f "$TMP_MODELS_ERR"; fi
   return 0
 }
 trap cleanup EXIT
@@ -206,14 +209,18 @@ provider_name() {
 # Fetch <baseUrl>/models into MODEL_IDS / MODEL_NAMES.
 fetch_models() {
   local rc=0
+  FETCH_ERROR=""
   [ -n "$BASE_URL" ] || return 1
   if [ -z "$TMP_MODELS" ]; then
     TMP_MODELS="$(mktemp "${TMPDIR:-/tmp}/omo-models.XXXXXX")"
+    TMP_MODELS_ERR="${TMP_MODELS}.err"
   fi
   run_config --fetch-models --base-url "$BASE_URL" --api-key "$API_KEY" \
-    --lang "$LANG_CODE" >"$TMP_MODELS" 2>/dev/null || rc=$?
+    --lang "$LANG_CODE" >"$TMP_MODELS" 2>"$TMP_MODELS_ERR" || rc=$?
   if [ "$rc" -ne 0 ]; then
+    FETCH_ERROR="$(grep -v '^[[:space:]]*$' "$TMP_MODELS_ERR" 2>/dev/null | tail -n 1 || true)"
     warn "$(lc 'could not fetch the model list from the endpoint' '无法从该端点获取模型列表')"
+    if [ -n "$FETCH_ERROR" ]; then printf '   %s\n' "$FETCH_ERROR" >&2; fi
     return 1
   fi
   MODEL_IDS=()
@@ -427,12 +434,23 @@ ensure_config_script() {
   local tmp
   tmp="$(mktemp "${TMPDIR:-/tmp}/omo-config.XXXXXX.mjs")"
   info "downloading omo-config.mjs" >&2
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$RAW_BASE/omo-config.mjs" -o "$tmp" || die "failed to download omo-config.mjs"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$tmp" "$RAW_BASE/omo-config.mjs" || die "failed to download omo-config.mjs"
-  else
-    die "need curl or wget to download omo-config.mjs"
+  # raw.githubusercontent.com is the canonical source; jsDelivr mirrors the
+  # same repo and stays reachable where raw is blocked (e.g. CN-region VMs).
+  local url ok=0
+  for url in "$RAW_BASE/omo-config.mjs" \
+             "https://cdn.jsdelivr.net/gh/zxfccmm4/omo-setup@main/omo-config.mjs"; do
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL --connect-timeout 10 --max-time 120 "$url" -o "$tmp" && ok=1
+    elif command -v wget >/dev/null 2>&1; then
+      wget -q --timeout=120 -O "$tmp" "$url" && ok=1
+    else
+      die "need curl or wget to download omo-config.mjs"
+    fi
+    if [ "$ok" -eq 1 ] && [ -s "$tmp" ]; then break; fi
+    ok=0
+  done
+  if [ "$ok" -ne 1 ] || [ ! -s "$tmp" ]; then
+    die "failed to download omo-config.mjs (tried raw.githubusercontent.com and cdn.jsdelivr.net)"
   fi
   TMP_CONFIG="$tmp"
   CONFIG_SCRIPT="$tmp"

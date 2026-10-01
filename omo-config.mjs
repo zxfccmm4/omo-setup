@@ -427,32 +427,48 @@ function displayUrl(url) {
   return `${url.origin}${url.pathname}${query ? `?${query}` : ""}`;
 }
 
+const FETCH_TIMEOUT_MS = 20000;
+
+function fetchFailure(url, err) {
+  if (err && (err.name === "AbortError" || err.name === "TimeoutError")) {
+    return new Error(`GET ${displayUrl(url)} timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+  }
+  return new Error(`GET ${displayUrl(url)} failed: ${err && err.message ? err.message : err}`);
+}
+
 // GET <baseUrl>/models (the same URL senpi's model discovery uses). Returns
-// [{ id, name }]; auth is optional so open endpoints work too.
+// [{ id, name }]; auth is optional so open endpoints work too. The abort timer
+// covers the body read as well as the request, so a server that answers with
+// headers and then stalls cannot hang the wizard.
 async function fetchModelList(baseUrl, apiKey) {
   const url = new URL(String(baseUrl).trim());
   url.pathname = `${url.pathname.replace(/\/+$/u, "")}/models`;
   const headers = { accept: "application/json" };
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   let response;
   try {
     response = await fetch(url, { headers, signal: controller.signal });
   } catch (err) {
-    throw new Error(`GET ${displayUrl(url)} failed: ${err && err.message ? err.message : err}`);
-  } finally {
     clearTimeout(timer);
+    throw fetchFailure(url, err);
   }
   if (!response.ok) {
+    clearTimeout(timer);
     throw new Error(`GET ${displayUrl(url)} failed: HTTP ${response.status}`);
   }
   let payload;
   try {
     payload = await response.json();
-  } catch {
+  } catch (err) {
+    clearTimeout(timer);
+    if (err && (err.name === "AbortError" || err.name === "TimeoutError")) {
+      throw fetchFailure(url, err);
+    }
     throw new Error(`GET ${displayUrl(url)} did not return JSON`);
   }
+  clearTimeout(timer);
   const data = Array.isArray(payload)
     ? payload
     : payload && Array.isArray(payload.data)

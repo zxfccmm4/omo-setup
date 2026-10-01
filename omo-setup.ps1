@@ -362,12 +362,16 @@ function Get-ConfigScript {
   }
   $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("omo-config-{0}.mjs" -f ([Guid]::NewGuid().ToString('N')))
   Info 'downloading omo-config.mjs'
-  try {
-    Invoke-RestMethod -Uri "$RawBase/omo-config.mjs" -OutFile $tmp
-  } catch {
-    Die "failed to download omo-config.mjs: $($_.Exception.Message)"
+  $urls = @("$RawBase/omo-config.mjs", 'https://cdn.jsdelivr.net/gh/zxfccmm4/omo-setup@main/omo-config.mjs')
+  foreach ($url in $urls) {
+    try {
+      Invoke-RestMethod -Uri $url -OutFile $tmp -TimeoutSec 120
+      if ((Test-Path $tmp) -and (Get-Item $tmp).Length -gt 0) { return $tmp }
+    } catch {
+      Warn "download failed from $url : $($_.Exception.Message)"
+    }
   }
-  return $tmp
+  Die 'failed to download omo-config.mjs (tried raw.githubusercontent.com and cdn.jsdelivr.net)'
 }
 
 function Get-RemoteModels {
@@ -375,11 +379,20 @@ function Get-RemoteModels {
   $cfg = Get-ConfigScript
   $fetchArgs = @('--fetch-models', '--base-url', $BaseUrl, '--lang', $script:LangCode)
   if ($ApiKey) { $fetchArgs += @('--api-key', $ApiKey) }
+  $errFile = [System.IO.Path]::GetTempFileName()
   $raw = $null
-  if (Get-Command node -ErrorAction SilentlyContinue) { $raw = & node $cfg @fetchArgs 2>$null }
-  elseif (Get-Command bun -ErrorAction SilentlyContinue) { $raw = & bun $cfg @fetchArgs 2>$null }
-  else { Die 'need node or bun to fetch models' }
-  if ($LASTEXITCODE -ne 0 -or -not $raw) { return $null }
+  try {
+    if (Get-Command node -ErrorAction SilentlyContinue) { $raw = & node $cfg @fetchArgs 2>$errFile }
+    elseif (Get-Command bun -ErrorAction SilentlyContinue) { $raw = & bun $cfg @fetchArgs 2>$errFile }
+    else { Die 'need node or bun to fetch models' }
+    if ($LASTEXITCODE -ne 0 -or -not $raw) {
+      $why = (Get-Content -Path $errFile -ErrorAction SilentlyContinue | Where-Object { $_.Trim() } | Select-Object -Last 1)
+      if ($why) { Warn $why }
+      return $null
+    }
+  } finally {
+    Remove-Item -Path $errFile -Force -ErrorAction SilentlyContinue
+  }
   $out = @()
   foreach ($line in @($raw)) {
     if (-not $line) { continue }

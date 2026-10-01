@@ -50,7 +50,7 @@ irm https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.ps1 | ie
 ```
 
 > [!NOTE]
-> 脚本会自动下载配套的 `omo-config.mjs`（无需手动准备），并从 `/dev/tty` 读取输入 —— 所以 `curl | bash` 也能正常交互。
+> 脚本会自动下载配套的 `omo-config.mjs`（无需手动准备），并从 `/dev/tty` 读取输入 —— 所以 `curl | bash` 也能正常交互。下载默认走 `raw.githubusercontent.com`，失败时自动改用 jsDelivr 镜像（`cdn.jsdelivr.net`），并带连接/总时长超时。
 
 ### 三步跑通
 
@@ -94,6 +94,7 @@ git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
 | --- | --- |
 | 🧭 **交互式向导** | 先选语言（English / 简体中文），再逐步引导填写 base URL、API key（隐藏输入），自动拉取端点模型列表供编号选择，写盘前先确认。 |
 | 🎛️ **模型选择** | 通过 `GET <baseUrl>/models` 拉取可用模型，支持 `all` / `1,3` / `2-4` / 关键词过滤；多智能体配置里也可直接从同一列表挑选。 |
+| 🛡️ **拉取不卡死** | 拉取模型列表带 20 秒超时（覆盖响应体读取，服务端挂起连接也不会永久卡住）；失败时打印具体原因（如 `HTTP 401`、`timed out after 20s`）并自动退回手动输入。 |
 | 🔔 **告警处理** | 自动判断所配模型是否命中 OmO 官方推荐梯队，未命中时写入 `warnings.offRecommendedModel`，避免启动时的 “Non-recommended model” 提示。 |
 | 🔍 **智能检测** | 已安装 `omo` 就跳过安装；未安装则询问后自动安装。 |
 | 🖥️ **跨平台** | Linux / macOS 用 `omo-setup.sh`，Windows 用 `omo-setup.ps1`，配置逻辑共用 `omo-config.mjs`。 |
@@ -110,8 +111,9 @@ git clone https://github.com/zxfccmm4/omo-setup && cd omo-setup
 1. **检测 omo** —— 在 `PATH` 中查找 `omo`（并兜底检查 `~/.bun/bin`、`~/.local/bin`、`~/.omo/bin` 等常见目录）。
    - 已安装 → 打印版本并**跳过**安装。
    - 未安装 → 询问是否安装，确认后运行官方安装脚本 `curl -fsSL https://get.omo.dev/install.sh | bash`（Windows：`irm https://get.omo.dev/install.ps1 | iex`）；失败时回退到 `bun add -g omo-ai` / `npm i -g omo-ai`。
-2. **逐步配置** —— 先选语言（English / 简体中文），再依次询问 base URL、API key（隐藏输入）；脚本会尝试拉取 `GET <baseUrl>/models` 并把模型列表编号列出，按 `all` / `1,3` / `2-4` / 关键词过滤选择，拉取失败则退回手动输入。随后是 provider 名称、API 协议、默认模型，最后打印摘要并请求确认。
-3. **写入配置** —— 确认后才写盘；输入 `n` 取消且不产生任何文件。
+2. **准备运行时** —— 写配置需要 Node.js 或 Bun；两者都没有时自动安装（Homebrew / NodeSource APT / Bun 脚本，见[依赖](#requirements)）。
+3. **逐步配置** —— 先选语言（English / 简体中文），再依次询问 base URL、API key（隐藏输入）；脚本会尝试拉取 `GET <baseUrl>/models` 并把模型列表编号列出，按 `all` / `1,3` / `2-4` / 关键词过滤选择，拉取失败则打印原因并退回手动输入。随后是 provider 名称、API 协议、默认模型，最后打印摘要并请求确认。
+4. **写入配置** —— 确认后才写盘；输入 `n` 取消且不产生任何文件。
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
@@ -327,14 +329,29 @@ OMO_MODELS=gpt-4o \
 
 ## 🧩 依赖
 
-- 配置写入需要 **Node.js >= 18** 或 **Bun**（脚本会自动选择可用的运行时）。
+- 配置写入需要 **Node.js >= 18** 或 **Bun**（脚本自动选择可用运行时）。**两者都没有时会自动安装**：macOS 用 Homebrew，Debian/Ubuntu 用 NodeSource APT 源（需要 sudo），其他平台回退到 Bun 官方安装脚本；全失败才报错退出。
 - 安装 omo 需要 `curl`（推荐）、或 `bun` / `npm`。
+- 下载 `omo-config.mjs` 和拉取模型列表都需要能访问 `raw.githubusercontent.com`（或镜像 `cdn.jsdelivr.net`）和你的端点。
 
 <p align="right">(<a href="#readme-top">回到顶部</a>)</p>
 
 <a id="faq"></a>
 
 ## ❓ 常见问题
+
+<details>
+<summary><b>卡在「正在从端点获取模型列表…」怎么办？</b></summary>
+
+向导拉取模型列表最长等 20 秒：如果端点发完响应头后挂起不发数据，会超时并打印 `timed out after 20s`，然后让你手动输入模型 id，不会永久卡住。若失败信息是 `HTTP 401`，检查 API key；若是连接错误，检查 base URL 和网络。任何情况下都可以直接手动输入逗号分隔的模型 id 继续，或改用非交互模式传 `--models`。
+
+</details>
+
+<details>
+<summary><b>下载 <code>omo-config.mjs</code> 失败或很慢（国内网络）？</b></summary>
+
+脚本会先试 `raw.githubusercontent.com`，失败或超时（10 秒连接 / 120 秒总时长）后自动改用 jsDelivr 镜像 `cdn.jsdelivr.net/gh/zxfccmm4/omo-setup@main/omo-config.mjs`。两个都不可达时脚本会报错退出；此时可以手动下载该文件放到脚本同目录（`curl | bash` 运行时即当前目录）——本地文件优先于网络下载。
+
+</details>
 
 <details>
 <summary><b>远程执行时 API key 输入会卡住？</b></summary>
@@ -371,6 +388,27 @@ curl -fsSL https://raw.githubusercontent.com/zxfccmm4/omo-setup/main/omo-setup.s
 ```bash
 node omo-config.mjs --base-url https://api.example.com/v1 --api-key sk-xxx --models gpt-4o
 ```
+
+辅助子命令（向导内部也在用，可单独调用）：
+
+```bash
+# 拉取端点模型列表（输出 id<TAB>名称，可直接喂给 --models-file）
+node omo-config.mjs --fetch-models --base-url https://api.example.com/v1 --api-key sk-xxx > models.txt
+node omo-config.mjs --base-url https://api.example.com/v1 --api-key sk-xxx --models-file models.txt
+
+# 查看从域名推导出的 provider 名 / 已配置的模型
+node omo-config.mjs --print-provider --base-url https://api.example.com/v1
+node omo-config.mjs --print-models --provider example-com
+```
+
+`--lang en|zh` 控制输出语言，`--recommended-warning on|off|auto` 控制是否写 `warnings.offRecommendedModel`。
+
+</details>
+
+<details>
+<summary><b>安装完提示 <code>No models available</code> / <code>Non-recommended model</code>？</b></summary>
+
+`No models available` 是没有任何 provider 配置时的提示——走完向导写入 provider 后不会再出现。`Non-recommended model` 来自 OmO 内置的推荐模型检查：脚本会自动判断所配模型是否命中官方推荐梯队（`claude-opus-5-5` / `claude-fable-5-1` / `kimi-k3` / `gpt-6-astra` / `gpt-6.1-sol` / `glm-5.3`，含 `-fast` 等后缀归一化），命中则优先设为默认模型；未命中则写入 `settings.json → warnings.offRecommendedModel: true` 静默该提示。用 `--recommended-warning on` 可保留提示。
 
 </details>
 
